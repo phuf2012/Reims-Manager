@@ -1,28 +1,34 @@
 # Reims Manager
 
-Reims Manager is a native GTK desktop app for managing virtual machines created by [Reims vGPU](https://github.com/steelbrain/reims-vgpu). It currently targets Linux desktop systems such as Linux Mint and Ubuntu. This project is in pre-release; use the `1.0-1` package for the updated interface.
+Reims Manager is a native GTK desktop app for managing virtual machines created by [Reims vGPU](https://github.com/steelbrain/reims-vgpu). It currently targets Linux desktop systems such as Linux Mint and Ubuntu.
 
-## What it can do
+## Stable 1.0.0
+
+The stable 1.0.0 app can:
 
 - List Reims VMs and show their state and virtual hardware.
-- Start and stop a VM.
-- In the **Settings** tab, change CPU cores, RAM, host GPU, resolution, HiDPI, borderless mode, audio, network, and diagnostic logging for a stopped VM. Changes take effect the next time the VM starts.
+- Start and stop a VM. Starting uses the host display resolution and borderless mode.
 - List host USB devices and attach or detach a selected device while a VM is running.
 - Show guest USB diagnostics and recent Reims/QEMU logs.
 
-The native window has four sections: **Overview**, **Settings**, **USB devices**, and **Logs**. The VM selector and Start/Stop buttons stay at the top of the window.
+The stable app has **Overview**, **USB devices**, and **Logs** sections. It does not include a VM settings editor.
 
-This is a focused early release, not a Virt Manager replacement. Reims does not use libvirt, and this app does not provide libvirt networks, snapshots, storage pools, XML editing, or SPICE redirection. Reims vGPU must be installed separately. Windows support is not available yet; the Reims host support and this app's USB integration currently target Linux.
+## 1.0.1-1 pre-release
+
+The [Reims-Manager 1.0.1-1 Pre-Release](https://github.com/phuf2012/Reims-Manager/releases/tag/1.0.1-1) has a redesigned interface and adds a **Settings** section. It lets you edit supported CPU, RAM, GPU, resolution, HiDPI, borderless, audio, network, and logging settings for a stopped VM. Changes apply on the VM's next start. These settings are not available in stable 1.0.0.
+
+## Scope
+
+This is a focused app, not a Virt Manager replacement. Reims does not use libvirt, and Reims Manager does not provide libvirt networks, snapshots, storage pools, XML editing, or SPICE redirection. Reims vGPU must be installed separately. Windows support is not available yet; this app and the current Reims host integration target Linux.
 
 ## First use
 
-1. Install Reims vGPU by following its current [upstream instructions](https://github.com/steelbrain/reims-vgpu).
-2. Install Reims Manager from the `.deb` in the **Reims-Manager 1.0-1 Pre-Release**, or run it from this checkout with `python3 native_app.py`.
-3. Open **Reims Manager** from your applications menu.
-4. Create a VM with Reims if you have not already. The manager operates VMs created by Reims; it does not download macOS or create a VM itself.
-5. Select a VM. Open **Settings** to adjust its configuration while it is stopped, or press **Start**. To pass a USB device, open **USB devices**, scan, select the device, and attach it.
+1. Install Reims vGPU by following its [upstream instructions](https://github.com/steelbrain/reims-vgpu).
+2. Install Reims Manager from the `.deb` attached to a GitHub release, or run it from a source checkout with `python3 native_app.py`.
+3. Create a VM with Reims if you have not already. Reims Manager operates VMs created by Reims; it does not create VMs or download macOS.
+4. Open Reims Manager, select a VM, and choose **Start**. For USB passthrough, select the **USB devices** section, scan, choose a device, and attach it.
 
-If the app reports a missing dependency, install the relevant package and reopen it. The Debian package declares GTK 3, Python GTK bindings, `usbutils`, `acl`, and PolicyKit dependencies. It does not install Reims or modify host USB rules.
+The Debian package declares GTK 3, Python GTK bindings, `usbutils`, `acl`, and PolicyKit dependencies. It does not install Reims or create persistent host USB rules.
 
 ## USB notes
 
@@ -32,28 +38,26 @@ For iPhone passthrough, the app may temporarily stop Mint's `usbmuxd.service` if
 
 ## Development
 
-Requirements on Debian or Ubuntu based systems:
+On Debian or Ubuntu based systems, install the desktop dependencies:
 
 ```sh
 sudo apt install python3 python3-gi gir1.2-gtk-3.0 usbutils acl policykit-1
 ```
 
-Run the desktop app from the project directory:
+Run the app from the project directory:
 
 ```sh
 python3 native_app.py
 ```
 
-To build a local Debian package on Debian or Ubuntu based systems, install `debhelper` and run:
+To build a `.deb`, install `debhelper` and run:
 
 ```sh
 sudo apt install debhelper
 dpkg-buildpackage -us -uc -b
 ```
 
-The `.deb` is written to the parent directory. The Debian metadata uses the GitHub repository URL `https://github.com/phuf2012/Reims-Manager`.
-
-The project is maintained by one person. Please use issues to report problems or suggest features; outside pull requests are not expected. The MIT license permits reuse and independent forks with attribution and preservation of the license notice.
+The `.deb` is written to the parent directory. The project is maintained by one person; use GitHub issues to report problems or suggest features. The MIT license permits reuse and independent forks with attribution and preservation of the license notice.
 
 ## License
 
