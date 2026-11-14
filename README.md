@@ -1,24 +1,26 @@
 # Reims Manager
 
-Reims Manager is a small native GTK desktop app for managing virtual machines created by [Reims vGPU](https://github.com/steelbrain/reims-vgpu). It currently targets Linux desktop systems such as Linux Mint and Ubuntu.
+Reims Manager is a native GTK desktop app for managing virtual machines created by [Reims vGPU](https://github.com/steelbrain/reims-vgpu). It currently targets Linux desktop systems such as Linux Mint and Ubuntu. This project is in pre-release; use the `1.0-1` package for the updated interface.
 
 ## What it can do
 
 - List Reims VMs and show their state and virtual hardware.
 - Start and stop a VM.
-- Save supported CPU, RAM, GPU, resolution, HiDPI, and borderless settings through `reims-ctl`.
+- In the **Settings** tab, change CPU cores, RAM, host GPU, resolution, HiDPI, borderless mode, audio, network, and diagnostic logging for a stopped VM. Changes take effect the next time the VM starts.
 - List host USB devices and attach or detach a selected device while a VM is running.
 - Show guest USB diagnostics and recent Reims/QEMU logs.
+
+The native window has four sections: **Overview**, **Settings**, **USB devices**, and **Logs**. The VM selector and Start/Stop buttons stay at the top of the window.
 
 This is a focused early release, not a Virt Manager replacement. Reims does not use libvirt, and this app does not provide libvirt networks, snapshots, storage pools, XML editing, or SPICE redirection. Reims vGPU must be installed separately. Windows support is not available yet; the Reims host support and this app's USB integration currently target Linux.
 
 ## First use
 
 1. Install Reims vGPU by following its current [upstream instructions](https://github.com/steelbrain/reims-vgpu).
-2. Install Reims Manager from a Linux release package when one is available, or run it from this checkout with `python3 native_app.py`.
+2. Install Reims Manager from the `.deb` in the **Reims-Manager 1.0-1 Pre-Release**, or run it from this checkout with `python3 native_app.py`.
 3. Open **Reims Manager** from your applications menu.
 4. Create a VM with Reims if you have not already. The manager operates VMs created by Reims; it does not download macOS or create a VM itself.
-5. Select a VM and use **Start**. To pass a USB device, open **USB devices**, scan, select the device, and attach it.
+5. Select a VM. Open **Settings** to adjust its configuration while it is stopped, or press **Start**. To pass a USB device, open **USB devices**, scan, select the device, and attach it.
 
 If the app reports a missing dependency, install the relevant package and reopen it. The Debian package declares GTK 3, Python GTK bindings, `usbutils`, `acl`, and PolicyKit dependencies. It does not install Reims or modify host USB rules.
 
