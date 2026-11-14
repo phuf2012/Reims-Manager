@@ -1,0 +1,22 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	:
+
+override_dh_auto_install:
+	:
+
+override_dh_install:
+	install -D -m 0644 app.py debian/reims-manager/usr/share/reims-manager/app.py
+	install -D -m 0644 native_app.py debian/reims-manager/usr/share/reims-manager/native_app.py
+	install -D -m 0644 web/index.html debian/reims-manager/usr/share/reims-manager/web/index.html
+	install -D -m 0644 'Reims Manager.desktop' debian/reims-manager/usr/share/applications/reims-manager.desktop
+	install -D -m 0755 debian/reims-manager-launcher debian/reims-manager/usr/bin/reims-manager
+
+override_dh_fixperms:
+	dh_fixperms
+	chmod 0755 debian/reims-manager/usr/bin/reims-manager
+

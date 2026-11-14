@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Reims Manager
+Comment=Manage Reims virtual machines and USB devices
+Exec=reims-manager
+Icon=computer
+Terminal=false
+Categories=System;Emulator;
+StartupNotify=true

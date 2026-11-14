@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Reims Manager</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101319;
+      --panel: #191e27;
+      --panel2: #202733;
+      --stroke: #303947;
+      --text: #edf2f7;
+      --muted: #a5b0c0;
+      --blue: #73a9ff;
+      --green: #62d6a4;
+      --amber: #f2c36c;
+      --red: #ff8585;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--text); background: var(--bg); font: 14px/1.45 system-ui, sans-serif; }
+    button, input, select { font: inherit; }
+    button { border: 1px solid var(--stroke); border-radius: 9px; background: var(--panel2); color: var(--text); padding: 9px 13px; cursor: pointer; }
+    button:hover { border-color: #6286ba; background: #293545; }
+    button:disabled { cursor: default; opacity: .45; }
+    button.primary { color: #071628; border-color: #8bb8ff; background: #8bb8ff; font-weight: 650; }
+    button.danger { color: #ffd1d1; border-color: #663d45; background: #37262d; }
+    input, select { border: 1px solid var(--stroke); border-radius: 8px; color: var(--text); background: #121720; padding: 9px 10px; }
+    .app { min-height: 100vh; display: grid; grid-template-columns: 260px minmax(0, 1fr); }
+    aside { background: #151a22; border-right: 1px solid var(--stroke); padding: 22px 15px; }
+    .brand { display: flex; align-items: center; gap: 12px; padding: 0 9px 25px; }
+    .brand-mark { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; color: #071628; background: var(--blue); font-weight: 800; font-size: 18px; }
+    .brand strong { display: block; font-size: 16px; }
+    .brand span { display: block; color: var(--muted); font-size: 12px; }
+    .section-label { color: #7f8b9a; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; padding: 4px 10px 10px; }
+    #vm-list { display: grid; gap: 6px; }
+    .vm-item { text-align: left; padding: 11px 12px; background: transparent; border-color: transparent; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .vm-item.selected { background: #242d39; border-color: #344052; }
+    .vm-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dot { display: inline-block; flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: #768294; }
+    .dot.running { background: var(--green); box-shadow: 0 0 10px #62d6a455; }
+    .side-note { margin: 24px 9px; padding: 12px; border: 1px solid var(--stroke); border-radius: 10px; color: var(--muted); font-size: 12px; }
+    main { padding: 28px clamp(18px, 4vw, 55px); max-width: 1200px; width: 100%; }
+    .topline { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+    h1 { margin: 0 0 6px; font-size: clamp(24px, 3vw, 32px); letter-spacing: -.03em; }
+    .subtitle { color: var(--muted); }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; }
+    .status { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .card { background: var(--panel); border: 1px solid var(--stroke); border-radius: 14px; padding: 18px; min-width: 0; }
+    .card h2 { margin: 0 0 15px; font-size: 15px; }
+    .metric-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .metric { padding: 13px; background: var(--panel2); border-radius: 10px; }
+    .metric b { font-size: 18px; display: block; margin-bottom: 3px; }
+    .metric span { color: var(--muted); font-size: 12px; }
+    .kv { display: grid; grid-template-columns: 125px 1fr; gap: 9px 14px; }
+    .kv dt { color: var(--muted); }
+    .kv dd { margin: 0; overflow-wrap: anywhere; }
+    .tabs { display: flex; gap: 7px; border-bottom: 1px solid var(--stroke); margin: 24px 0 15px; }
+    .tab { border: 0; border-radius: 0; background: none; color: var(--muted); border-bottom: 2px solid transparent; padding: 10px 13px; }
+    .tab.active { color: var(--text); border-bottom-color: var(--blue); }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    label { display: grid; gap: 6px; color: var(--muted); }
+    .check { display: flex; align-items: center; gap: 9px; color: var(--text); }
+    .check input { accent-color: var(--blue); }
+    .hint { color: var(--muted); font-size: 12px; margin-top: 11px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 11px 9px; border-bottom: 1px solid var(--stroke); vertical-align: middle; }
+    th { color: var(--muted); font-size: 12px; font-weight: 550; }
+    td.device { min-width: 220px; }
+    .usb-note { margin: 0 0 13px; color: var(--muted); }
+    pre { min-height: 120px; max-height: 420px; overflow: auto; background: #0c1016; border: 1px solid var(--stroke); border-radius: 9px; padding: 13px; color: #c7d5e8; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .empty { border: 1px dashed #475365; border-radius: 14px; padding: 36px; color: var(--muted); text-align: center; }
+    .toast { position: fixed; right: 22px; bottom: 20px; z-index: 5; max-width: 420px; padding: 13px 16px; background: #273344; border: 1px solid #55709a; box-shadow: 0 8px 28px #0008; border-radius: 10px; }
+    .toast.error { border-color: #94545c; background: #3c242b; }
+    .warning { color: var(--amber); }
+    @media (max-width: 760px) {
+      .app { grid-template-columns: 1fr; }
+      aside { border-right: 0; border-bottom: 1px solid var(--stroke); padding: 13px; }
+      .brand { padding-bottom: 12px; }
+      #vm-list { display: flex; overflow: auto; }
+      .vm-item { min-width: 160px; }
+      .side-note, .section-label { display: none; }
+      main { padding-top: 21px; }
+      .topline { display: block; }
+      .toolbar { margin-top: 14px; }
+      .grid, .field-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside>
+      <div class="brand"><div class="brand-mark">R</div><div><strong>Reims Manager</strong><span>Local VM controls</span></div></div>
+      <div class="section-label">Virtual machines</div>
+      <div id="vm-list"></div>
+      <div class="side-note">USB devices are passed directly to macOS while attached, so Mint temporarily loses access to them. Stop or detach them to return them to the host.</div>
+    </aside>
+    <main>
+      <div id="empty" class="empty" hidden>No Reims VMs found. Create one with Reims first, then refresh this page.</div>
+      <div id="content" hidden>
+        <div class="topline">
+          <div>
+            <h1 id="vm-title">Reims VM</h1>
+            <div class="status"><span id="status-dot" class="dot"></span><span id="status-text">Checking…</span></div>
+          </div>
+          <div class="toolbar">
+            <button id="start-btn" class="primary">Start fullscreen</button>
+            <button id="stop-btn">Shut down</button>
+            <button id="force-btn" class="danger">Force off</button>
+            <button id="refresh-btn">Refresh</button>
+            <button id="quit-btn" title="Stop the local manager">Quit app</button>
+          </div>
+        </div>
+
+        <section class="grid">
+          <div class="card">
+            <h2>VM resources</h2>
+            <div class="metric-row">
+              <div class="metric"><b id="cpu-value">—</b><span>CPU cores</span></div>
+              <div class="metric"><b id="memory-value">—</b><span>Memory</span></div>
+              <div class="metric"><b id="display-value">—</b><span>Display</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <h2>Virtual hardware</h2>
+            <dl class="kv" id="hardware-list"></dl>
+          </div>
+        </section>
+
+        <div class="tabs">
+          <button class="tab active" data-tab="settings">Settings</button>
+          <button class="tab" data-tab="usb">USB devices</button>
+          <button class="tab" data-tab="logs">Logs</button>
+        </div>
+
+        <section class="tab-content active" id="tab-settings">
+          <div class="card">
+            <h2>Performance and display</h2>
+            <form id="settings-form">
+              <div class="field-grid">
+                <label>CPU cores
+                  <select name="cpus"><option>1</option><option>2</option><option>3</option><option>4</option></select>
+                </label>
+                <label>Memory
+                  <select name="memory"><option value="4">4 GB</option><option value="8">8 GB</option><option value="12">12 GB</option><option value="16">16 GB</option></select>
+                </label>
+                <label>Resolution
+                  <select name="resolution"><option value="host">Match host screen</option><option>1920x1080</option><option>1600x900</option><option>1280x800</option><option>1280x720</option></select>
+                </label>
+                <label>Vulkan GPU
+                  <select name="gpu" id="gpu-select"></select>
+                </label>
+                <label class="check"><input type="checkbox" name="borderless" checked> Borderless fullscreen</label>
+                <label class="check"><input type="checkbox" name="hidpi"> HiDPI (higher render load)</label>
+                <label class="check"><input type="checkbox" name="audio" checked> VM audio</label>
+                <label class="check"><input type="checkbox" name="network" checked> VM network</label>
+                <label class="check"><input type="checkbox" name="logs"> Keep QEMU logs</label>
+              </div>
+              <p class="hint">Stop the VM before saving settings. Fullscreen settings apply on its next start.</p>
+              <button class="primary" type="submit">Save settings</button>
+            </form>
+          </div>
+        </section>
+
+        <section class="tab-content" id="tab-usb">
+          <div class="card">
+            <h2>USB passthrough</h2>
+            <p class="usb-note">Attach a host USB device to the VM's XHCI bus or detach it to return it to Mint. A device leaving Mint confirms host capture, not that macOS detected it. Avoid passing through the keyboard or mouse you need to control Mint.</p>
+            <p class="usb-note warning">Safely eject USB storage in Mint before attaching it. If your account cannot open a device, Mint may request temporary access to that device only; unplugging removes it. No system rule is written.</p>
+            <div class="table-wrap"><table>
+              <thead><tr><th>Device</th><th>USB ID</th><th>Host address</th><th>State</th><th></th></tr></thead>
+              <tbody id="usb-list"><tr><td colspan="5">Select a running VM to scan devices.</td></tr></tbody>
+            </table></div>
+            <div class="toolbar" style="margin-top:14px"><button id="usb-refresh">Scan USB devices</button></div>
+            <div class="toolbar" style="margin-top:14px"><button id="usb-diagnostics-refresh">Check guest USB bus</button></div>
+            <p class="hint">QEMU bus report: this shows devices QEMU attached to the virtual USB controller. In macOS, check Apple menu → About This Mac → System Report → USB. If a drive is listed there but not in Finder, check Disk Utility → View → Show All Devices; do not erase it unless you intend to wipe it.</p>
+            <pre id="usb-diagnostics" style="white-space:pre-wrap;overflow:auto;max-height:260px">Select a running VM and check the guest USB bus.</pre>
+          </div>
+        </section>
+
+        <section class="tab-content" id="tab-logs">
+          <div class="card"><h2>Recent VM output</h2><pre id="logs">Select a VM to load its logs.</pre><button id="logs-refresh">Refresh logs</button></div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <div id="toast" class="toast" hidden></div>
+  <script>
+    const base = window.location.pathname.endsWith('/') ? window.location.pathname : window.location.pathname + '/';
+    const api = path => base + 'api/' + path;
+    let selected = null;
+    let latest = [];
+    let gpuOptions = [];
+
+    function toast(message, error=false) {
+      const el = document.getElementById('toast');
+      el.textContent = message; el.hidden = false; el.classList.toggle('error', error);
+      clearTimeout(toast.timer); toast.timer = setTimeout(() => el.hidden = true, 5000);
+    }
+    async function request(path, options={}) {
+      const response = await fetch(api(path), {cache:'no-store', ...options});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Request failed');
+      return data;
+    }
+    function detail(vm, key, fallback='—') { return vm?.details?.[key] || fallback; }
+    function renderList() {
+      const list = document.getElementById('vm-list'); list.replaceChildren();
+      for (const vm of latest) {
+        const button = document.createElement('button'); button.className = 'vm-item' + (vm.name === selected ? ' selected' : '');
+        const label = document.createElement('span'); label.className = 'vm-name'; label.textContent = vm.name;
+        const dot = document.createElement('span'); dot.className = 'dot' + (vm.state === 'running' ? ' running' : '');
+        button.append(label, dot); button.onclick = () => { selected = vm.name; render(); refreshUsb(); refreshLogs(); };
+        list.append(button);
+      }
+    }
+    function fillSettings(vm) {
+      const form = document.getElementById('settings-form');
+      form.elements.cpus.value = (detail(vm, 'cpus', '4').match(/\d+/) || ['4'])[0];
+      form.elements.memory.value = (detail(vm, 'memory', '16G').match(/\d+/) || ['16'])[0];
+      const display = detail(vm, 'displays', '');
+      const resolution = display.includes('host') ? 'host' : (display.match(/\d{3,5}x\d{3,5}/) || ['host'])[0];
+      form.elements.resolution.value = [...form.elements.resolution.options].some(o => o.value === resolution) ? resolution : 'host';
+      form.elements.borderless.checked = display.includes('borderless') || resolution === 'host';
+      form.elements.hidpi.checked = display.includes('HiDPI');
+      form.elements.audio.checked = detail(vm, 'audio', 'on').startsWith('on');
+      form.elements.network.checked = !detail(vm, 'network', 'user').startsWith('off');
+      form.elements.logs.checked = !detail(vm, 'logs', 'off').startsWith('off');
+      const gpu = detail(vm, 'gpu', '');
+      const selectedGpu = gpuOptions.find(g => g.label.startsWith(gpu));
+      if (selectedGpu) form.elements.gpu.value = selectedGpu.number;
+    }
+    function render() {
+      renderList();
+      const vm = latest.find(item => item.name === selected);
+      document.getElementById('empty').hidden = latest.length > 0;
+      document.getElementById('content').hidden = !vm;
+      if (!vm) return;
+      document.getElementById('vm-title').textContent = vm.name;
+      document.getElementById('status-text').textContent = vm.state;
+      document.getElementById('status-dot').className = 'dot' + (vm.state === 'running' ? ' running' : '');
+      document.getElementById('cpu-value').textContent = detail(vm, 'cpus');
+      document.getElementById('memory-value').textContent = detail(vm, 'memory');
+      document.getElementById('display-value').textContent = detail(vm, 'displays');
+      document.getElementById('start-btn').disabled = vm.state === 'running';
+      document.getElementById('stop-btn').disabled = vm.state !== 'running';
+      document.getElementById('force-btn').disabled = vm.state !== 'running';
+      const hardware = document.getElementById('hardware-list'); hardware.replaceChildren();
+      for (const [key, title] of [['gpu','GPU'],['video','Graphics'],['audio','Audio'],['network','Network'],['disk','Disk']]) {
+        const dt = document.createElement('dt'); dt.textContent = title;
+        const dd = document.createElement('dd'); dd.textContent = detail(vm, key);
+        hardware.append(dt, dd);
+      }
+      const settingsForm = document.getElementById('settings-form');
+      if (!settingsForm.contains(document.activeElement)) fillSettings(vm);
+    }
+    async function refreshState() {
+      try {
+        const data = await request('state'); latest = data.vms || []; gpuOptions = data.gpus || [];
+        if (!latest.some(vm => vm.name === selected)) selected = latest[0]?.name || null;
+        const gpuSelect = document.getElementById('gpu-select');
+        const oldValue = gpuSelect.value; gpuSelect.replaceChildren();
+        for (const gpu of gpuOptions) { const option = document.createElement('option'); option.value = gpu.number; option.textContent = `${gpu.number}. ${gpu.label}`; gpuSelect.append(option); }
+        render();
+      } catch (error) { toast(error.message, true); }
+    }
+    async function action(action) {
+      if (!selected) return;
+      if (action === 'force-stop' && !confirm('Power off the VM immediately? Unsaved guest work may be lost.')) return;
+      try { const data = await request('vm/action', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:selected,action})}); toast(data.message); await refreshState(); }
+      catch (error) { toast(error.message, true); }
+    }
+    async function refreshUsb() {
+      const body = document.getElementById('usb-list');
+      if (!selected) { body.innerHTML = '<tr><td colspan="5">Select a VM first.</td></tr>'; return; }
+      body.innerHTML = '<tr><td colspan="5">Scanning…</td></tr>';
+      try {
+        const data = await request('usb?name=' + encodeURIComponent(selected)); body.replaceChildren();
+        if (!data.devices.length) { body.innerHTML = '<tr><td colspan="5">No USB devices found.</td></tr>'; return; }
+        for (const device of data.devices) {
+          const row = document.createElement('tr');
+          const name = document.createElement('td'); name.className='device'; name.textContent=device.description;
+          const ids = document.createElement('td'); ids.textContent=`${device.vendor}:${device.product}`;
+          const port = document.createElement('td'); port.textContent=`${String(device.bus).padStart(3,'0')}:${String(device.address).padStart(3,'0')}`;
+          const state = document.createElement('td'); state.textContent=device.attached ? (device.attached_to_running_vm ? (device.available_on_host ? 'Passed to QEMU' : 'Held by QEMU') : 'Released (VM stopped)') : 'Available to Mint';
+          const cell = document.createElement('td');
+          const button = document.createElement('button'); button.textContent=device.attached ? 'Detach' : 'Attach'; button.disabled=!device.attached && latest.find(v=>v.name===selected)?.state!=='running';
+          button.onclick=async()=>{
+            if (!device.attached && !confirm(`Pass “${device.description}” to macOS? Mint will lose access until it is detached or the VM stops. If needed, Mint will ask to grant temporary access to this one USB device. Safely eject USB storage in Mint first.`)) return;
+            try { const result=await request('usb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:selected,action:device.attached?'detach':'attach',id:device.id})}); toast(result.message); await refreshUsb(); await refreshUsbDiagnostics(); }
+            catch(error){toast(error.message,true);}
+          };
+          cell.append(button); row.append(name,ids,port,state,cell); body.append(row);
+        }
+      } catch(error) { body.innerHTML=''; const row=document.createElement('tr'); const cell=document.createElement('td'); cell.colSpan=5; cell.textContent=error.message; row.append(cell); body.append(row); }
+    }
+    async function refreshLogs() {
+      if (!selected) return;
+      const el=document.getElementById('logs'); el.textContent='Loading…';
+      try { const data=await request('logs?name='+encodeURIComponent(selected)); el.textContent=data.logs; }
+      catch(error) { el.textContent=error.message; }
+    }
+    async function refreshUsbDiagnostics() {
+      const el=document.getElementById('usb-diagnostics');
+      if(!selected){el.textContent='Select a VM first.';return;}
+      el.textContent='Querying QEMU…';
+      try {
+        const data=await request('usb/diagnostics?name='+encodeURIComponent(selected));
+        el.textContent='QEMU guest USB devices (info usb):\n'+data.guest_usb+'\n\nUSB passthrough devices (info qtree):\n'+data.passthrough_devices;
+      } catch(error) { el.textContent=error.message; }
+    }
+    document.querySelectorAll('.tab').forEach(button=>button.addEventListener('click',()=>{
+      document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b===button));
+      document.querySelectorAll('.tab-content').forEach(section=>section.classList.toggle('active',section.id===`tab-${button.dataset.tab}`));
+      if(button.dataset.tab==='usb') { refreshUsb(); refreshUsbDiagnostics(); } if(button.dataset.tab==='logs') refreshLogs();
+    }));
+    document.getElementById('start-btn').onclick=()=>action('start');
+    document.getElementById('stop-btn').onclick=()=>action('stop');
+    document.getElementById('force-btn').onclick=()=>action('force-stop');
+    document.getElementById('refresh-btn').onclick=refreshState;
+    document.getElementById('quit-btn').onclick=async()=>{
+      if(!confirm('Close Reims Manager? The VM will keep running.'))return;
+      try{await request('quit',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});document.body.innerHTML='<main style="padding:36px;font:16px system-ui;color:#edf2f7;background:#101319;min-height:100vh"><h1>Reims Manager stopped</h1><p>You can close this tab. Running VMs were not stopped.</p></main>';}
+      catch(error){toast(error.message,true);}
+    };
+    document.getElementById('usb-refresh').onclick=refreshUsb;
+    document.getElementById('usb-diagnostics-refresh').onclick=refreshUsbDiagnostics;
+    document.getElementById('logs-refresh').onclick=refreshLogs;
+    document.getElementById('settings-form').onsubmit=async event=>{
+      event.preventDefault(); if(!selected)return;
+      if(latest.find(v=>v.name===selected)?.state==='running'){toast('Shut down the VM before saving settings.',true);return;}
+      const form=event.currentTarget;
+      const payload={name:selected,cpus:form.elements.cpus.value,memory:form.elements.memory.value,resolution:form.elements.resolution.value,gpu:form.elements.gpu.value,borderless:form.elements.borderless.checked,hidpi:form.elements.hidpi.checked,audio:form.elements.audio.checked,network:form.elements.network.checked,logs:form.elements.logs.checked};
+      try{const result=await request('vm/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});toast(result.message||'Settings saved.');await refreshState();}
+      catch(error){toast(error.message,true);}
+    };
+    refreshState(); setInterval(refreshState,5000);
+  </script>
+</body>
+</html>
