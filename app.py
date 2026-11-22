@@ -11,6 +11,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import shutil
 import socket
 import subprocess
@@ -18,6 +19,8 @@ import sys
 import threading
 import time
 import uuid
+import urllib.error
+import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -30,15 +33,131 @@ HOME = Path.home()
 CONFIG_DIR = HOME / ".config" / "reims-manager"
 USB_STATE_FILE = CONFIG_DIR / "usb-devices.json"
 USB_HOST_STATE_FILE = CONFIG_DIR / "usb-host-state.json"
+UPDATE_SETTINGS_FILE = CONFIG_DIR / "update-settings.json"
 REIMS = shutil.which("reims-ctl") or str(HOME / ".cargo" / "bin" / "reims-ctl")
+APP_VERSION = "1.0.1"
+APP_PRERELEASE = False
+GITHUB_RELEASES_URL = "https://api.github.com/repos/phuf2012/Reims-Manager/releases?per_page=20"
+UPDATE_CHECK_INTERVAL = 24 * 60 * 60
 NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
 LSUSB_RE = re.compile(
     r"^Bus\s+(\d+)\s+Device\s+(\d+):\s+ID\s+([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\s*(.*)$"
 )
+SHARE_NET_ID = "reims_manager_share_net"
+SHARE_DEVICE_ID = "reims_manager_share_nic"
+SHARE_URL = "smb://10.0.3.4/qemu"
 
 
 class ManagerError(Exception):
     pass
+
+
+def load_update_settings() -> dict:
+    try:
+        saved = json.loads(UPDATE_SETTINGS_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        saved = {}
+    if not isinstance(saved, dict):
+        saved = {}
+    return {
+        "auto_check": saved.get("auto_check") is True,
+        "last_checked": saved.get("last_checked") if isinstance(saved.get("last_checked"), (int, float)) else None,
+    }
+
+
+def write_update_settings(settings: dict) -> None:
+    CONFIG_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = UPDATE_SETTINGS_FILE.with_name(f".update-settings-{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, UPDATE_SETTINGS_FILE)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def save_update_settings(auto_check: bool) -> dict:
+    if not isinstance(auto_check, bool):
+        raise ManagerError("Automatic update checking must be enabled or disabled.")
+    current = load_update_settings()
+    current["auto_check"] = auto_check
+    write_update_settings(current)
+    return current
+
+
+def update_settings_status() -> dict:
+    settings = load_update_settings()
+    last_checked = settings["last_checked"]
+    settings.update({
+        "current_version": APP_VERSION,
+        "check_due": last_checked is None or time.time() - last_checked >= UPDATE_CHECK_INTERVAL,
+    })
+    return settings
+
+
+def version_key(tag: str, prerelease: bool = False) -> tuple[tuple[int, ...], int, int] | None:
+    normalized = tag.removeprefix("v")
+    match = re.fullmatch(r"(\d+(?:\.\d+)*)(?:-(\d+))?", normalized)
+    if not match:
+        return None
+    base = [int(part) for part in match.group(1).split(".")]
+    while len(base) > 1 and base[-1] == 0:
+        base.pop()
+    return tuple(base), 0 if prerelease else 1, int(match.group(2) or 0)
+
+
+def check_for_updates() -> dict:
+    request = urllib.request.Request(
+        GITHUB_RELEASES_URL,
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "Reims-Manager"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            releases = json.loads(response.read(2_000_001))
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise ManagerError(f"Could not check GitHub releases: {exc}") from exc
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ManagerError("GitHub returned an unreadable update list.") from exc
+    if not isinstance(releases, list):
+        raise ManagerError("GitHub returned an unexpected update response.")
+
+    current_key = version_key(APP_VERSION, prerelease=APP_PRERELEASE)
+    candidates = []
+    for release in releases:
+        if not isinstance(release, dict) or release.get("draft"):
+            continue
+        key = version_key(str(release.get("tag_name", "")), prerelease=release.get("prerelease") is True)
+        if key is not None:
+            candidates.append((key, release))
+    if not candidates:
+        raise ManagerError("No published Reims Manager releases with readable version tags were found.")
+    latest_key, latest = max(candidates, key=lambda item: item[0])
+    assets = latest.get("assets", [])
+    if not isinstance(assets, list):
+        assets = []
+    deb_asset = next(
+        (asset for asset in assets if isinstance(asset, dict) and str(asset.get("name", "")).lower().endswith(".deb")),
+        None,
+    )
+    download_url = deb_asset.get("browser_download_url") if deb_asset else None
+    release_url = latest.get("html_url")
+    if not isinstance(release_url, str) or not release_url.startswith("https://github.com/phuf2012/Reims-Manager/releases/"):
+        release_url = "https://github.com/phuf2012/Reims-Manager/releases"
+    if not isinstance(download_url, str) or not download_url.startswith("https://github.com/phuf2012/Reims-Manager/releases/download/"):
+        download_url = None
+
+    settings = load_update_settings()
+    settings["last_checked"] = time.time()
+    write_update_settings(settings)
+    return {
+        "current_version": APP_VERSION,
+        "latest_version": str(latest.get("tag_name", "Unknown")),
+        "release_name": str(latest.get("name") or latest.get("tag_name") or "Reims Manager update"),
+        "update_available": latest_key > (current_key or ((), 0, 0)),
+        "release_url": release_url,
+        "download_url": download_url,
+        "published_at": latest.get("published_at"),
+    }
 
 
 def run_reims(*args: str, timeout: int = 120) -> str:
@@ -111,6 +230,119 @@ def get_vm(name: str) -> dict:
         if vm["name"] == name:
             return vm
     raise ManagerError(f"VM '{name}' was not found in Reims.")
+
+
+def smbd_path() -> str | None:
+    """Return Samba's daemon path when it is installed for QEMU's SMB helper."""
+    return shutil.which("smbd") or ("/usr/sbin/smbd" if Path("/usr/sbin/smbd").is_file() else None)
+
+
+def qemu_option_fields(value: str) -> list[str]:
+    """Split a QEMU comma-separated option string, treating doubled commas as literals."""
+    fields: list[str] = []
+    current: list[str] = []
+    index = 0
+    while index < len(value):
+        if value[index] == ",":
+            if index + 1 < len(value) and value[index + 1] == ",":
+                current.append(",")
+                index += 2
+            else:
+                fields.append("".join(current))
+                current.clear()
+                index += 1
+        else:
+            current.append(value[index])
+            index += 1
+    fields.append("".join(current))
+    return fields
+
+
+def qemu_extra_args(details: dict[str, str]) -> list[str]:
+    try:
+        return shlex.split(details.get("extra args", ""))
+    except ValueError as exc:
+        raise ManagerError("This VM has malformed extra QEMU arguments. Fix them in Reims before sharing a folder.") from exc
+
+
+def shared_folder_path(details: dict[str, str]) -> str | None:
+    args = qemu_extra_args(details)
+    for index, option in enumerate(args[:-1]):
+        if option != "-netdev":
+            continue
+        fields = qemu_option_fields(args[index + 1])
+        if f"id={SHARE_NET_ID}" not in fields:
+            continue
+        for field in fields:
+            if field.startswith("smb="):
+                return field[4:]
+    return None
+
+
+def strip_shared_folder_args(args: list[str]) -> list[str]:
+    cleaned = []
+    index = 0
+    while index < len(args):
+        if args[index] in ("-netdev", "-device") and index + 1 < len(args):
+            fields = qemu_option_fields(args[index + 1])
+            managed = (
+                args[index] == "-netdev" and f"id={SHARE_NET_ID}" in fields
+            ) or (
+                args[index] == "-device" and f"id={SHARE_DEVICE_ID}" in fields
+            )
+            if managed:
+                index += 2
+                continue
+        cleaned.append(args[index])
+        index += 1
+    return cleaned
+
+
+def checked_shared_folder(path: str) -> Path:
+    folder = Path(path).expanduser()
+    if any(ord(character) < 32 for character in str(folder)):
+        raise ManagerError("Folder paths with control characters cannot be shared.")
+    try:
+        folder = folder.resolve(strict=True)
+    except OSError as exc:
+        raise ManagerError("The selected shared folder no longer exists.") from exc
+    if not folder.is_dir():
+        raise ManagerError("Choose a folder, not a file.")
+    if not os.access(folder, os.R_OK | os.W_OK | os.X_OK):
+        raise ManagerError("The selected folder must be readable and writable by your Linux account.")
+    return folder
+
+
+def shared_folder_status(name: str) -> dict:
+    vm = get_vm(name)
+    return {
+        "path": shared_folder_path(vm["details"]) or "",
+        "smbd_available": bool(smbd_path()),
+        "url": SHARE_URL,
+    }
+
+
+def configure_shared_folder(name: str, path: str) -> str:
+    name = valid_name(name)
+    vm = get_vm(name)
+    if vm["state"] == "running":
+        raise ManagerError("Stop the VM before changing its shared folder.")
+    args = strip_shared_folder_args(qemu_extra_args(vm["details"]))
+    if path.strip():
+        if not smbd_path():
+            raise ManagerError("QEMU needs Samba's smbd to share a folder. Install it with `sudo apt install samba`, then try again.")
+        folder = checked_shared_folder(path)
+        qemu_path = str(folder).replace(",", ",,")
+        args.extend([
+            "-netdev",
+            f"user,id={SHARE_NET_ID},ipv6=off,net=10.0.3.0/24,smb={qemu_path},smbserver=10.0.3.4",
+            "-device",
+            f"virtio-net-pci,id={SHARE_DEVICE_ID},netdev={SHARE_NET_ID},mac=52:54:00:52:4d:53",
+        ])
+        result = run_reims("set", name, "--extra-args", shlex.join(args))
+        return f"Shared folder saved. It will be available in macOS at {SHARE_URL} when the VM runs."
+    run_reims("set", name, "--extra-args", shlex.join(args))
+    return "Shared folder removed from this VM."
 
 
 def read_usb_state() -> dict[str, dict]:
@@ -553,12 +785,20 @@ def apply_settings(name: str, payload: dict) -> str:
     resolution = payload.get("resolution", "host")
     if resolution not in ("host", "1920x1080", "1600x900", "1280x800", "1280x720"):
         raise ManagerError("Choose a supported resolution.")
+    refresh = payload.get("refresh")
+    if refresh is not None:
+        refresh = str(refresh)
+        if refresh not in ("host", "60", "120"):
+            raise ManagerError("Choose host refresh, 60 Hz, or 120 Hz.")
     gpu = str(payload.get("gpu", "auto"))
     if not re.fullmatch(r"(?:auto|[1-9][0-9]*|[A-Za-z0-9 _().:-]+|/[^\s]+\.json)", gpu):
         raise ManagerError("Invalid GPU selection.")
     borderless = bool(payload.get("borderless", True))
     hidpi = bool(payload.get("hidpi", False))
     audio = bool(payload.get("audio", True))
+    video_acceleration = payload.get("video_acceleration")
+    if video_acceleration is not None and not isinstance(video_acceleration, bool):
+        raise ManagerError("Video acceleration must be enabled or disabled.")
     network = bool(payload.get("network", True))
     logs = bool(payload.get("logs", False))
     args = [
@@ -573,13 +813,22 @@ def apply_settings(name: str, payload: dict) -> str:
         "--logs", "true" if logs else "false",
         "--gpu", gpu,
     ]
+    if refresh is not None:
+        args.extend(["--refresh", "0" if refresh == "host" else refresh])
+    if video_acceleration is not None:
+        args.extend(["--video-acceleration", "true" if video_acceleration else "false"])
     return run_reims(*args)
 
 
 def do_action(name: str, action: str) -> str:
     name = valid_name(name)
     if action == "start":
-        run_reims("set", name, "--borderless", "true", "--resolution", "host")
+        vm = get_vm(name)
+        folder = shared_folder_path(vm["details"])
+        if folder:
+            if not smbd_path():
+                raise ManagerError("This VM has a shared folder configured, but Samba's smbd is missing. Install it with `sudo apt install samba`, or remove the shared folder setting.")
+            checked_shared_folder(folder)
         return run_reims("start", name, timeout=180)
     if action == "stop":
         result = run_reims("stop", name, timeout=120)
@@ -691,6 +940,12 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if parsed.path == "/api/state":
                 self._send(200, {"vms": list_vms(), "gpus": gpu_list()})
+            elif parsed.path == "/api/updates/settings":
+                self._send(200, update_settings_status())
+            elif parsed.path == "/api/updates/check":
+                self._send(200, check_for_updates())
+            elif parsed.path == "/api/shared-folder":
+                self._send(200, shared_folder_status(query.get("name", [""])[0]))
             elif parsed.path == "/api/usb":
                 self._send(200, {"devices": list_usb_devices(query.get("name", [""])[0])})
             elif parsed.path == "/api/usb/diagnostics":
@@ -718,6 +973,13 @@ class Handler(BaseHTTPRequestHandler):
             elif route == "/api/vm/settings":
                 message = apply_settings(body.get("name", ""), body)
                 self._send(200, {"message": message or "Settings saved. They apply on the next start."})
+            elif route == "/api/shared-folder":
+                message = configure_shared_folder(body.get("name", ""), str(body.get("path", "")))
+                self._send(200, {"message": message})
+            elif route == "/api/updates/settings":
+                settings = save_update_settings(body.get("auto_check"))
+                settings.update({"current_version": APP_VERSION, "check_due": settings["last_checked"] is None or time.time() - settings["last_checked"] >= UPDATE_CHECK_INTERVAL})
+                self._send(200, settings)
             elif route == "/api/usb":
                 message = usb_action(body.get("name", ""), body.get("action", ""), body.get("id", ""))
                 self._send(200, {"message": message})
