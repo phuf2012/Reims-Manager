@@ -2,20 +2,23 @@
 
 Reims Manager is a native GTK desktop app for managing virtual machines created by [Reims vGPU](https://github.com/steelbrain/reims-vgpu). It currently targets Linux desktop systems such as Linux Mint and Ubuntu.
 
-## Stable 1.0.0
+## Reims Manager 1.0.1 — Stable
 
-The stable 1.0.0 app can:
+The stable app can:
 
 - List Reims VMs and show their state and virtual hardware.
 - Start and stop a VM. Starting uses the host display resolution and borderless mode.
 - List host USB devices and attach or detach a selected device while a VM is running.
 - Show guest USB diagnostics and recent Reims/QEMU logs.
+- Edit supported CPU, RAM, GPU, video acceleration, resolution, refresh rate, HiDPI, borderless, audio, network, and logging settings for a stopped VM.
+- Share a selected Linux folder with macOS through QEMU's SMB support.
+- Check GitHub for updates, with optional automatic checks.
 
-The stable app has **Overview**, **USB devices**, and **Logs** sections. It does not include a VM settings editor.
+Settings apply on the VM's next start, and **Start** preserves them instead of silently forcing host resolution. Start and shutdown show progress and prevent duplicate clicks.
 
-## 1.0.1-1 pre-release
+The **Shared folder** section can expose one Linux folder to macOS with QEMU's private SMB network. The guest can read and write the selected folder while the VM runs. It requires Samba's `smbd` on the host (`sudo apt install samba`); Reims Manager does not install or enable Samba. Without `smbd`, the app shows that requirement and will not save an unusable share. In macOS Finder, use **Go → Connect to Server** and enter `smb://10.0.3.4/qemu`. The share uses a private VM network and is not available from your local network.
 
-The [Reims-Manager 1.0.1-1 Pre-Release](https://github.com/phuf2012/Reims-Manager/releases/tag/1.0.1-1) has a redesigned interface and adds a **Settings** section. It lets you edit supported CPU, RAM, GPU, resolution, HiDPI, borderless, audio, network, and logging settings for a stopped VM. Changes apply on the VM's next start. These settings are not available in stable 1.0.0.
+The **Updates** section has a **Check for Updates** action and an opt-in automatic check setting. Enabling it checks immediately, then at app launch no more than once per day. It links to the newer release `.deb`; Reims Manager never downloads or installs an update without your action. Update checks contact the public GitHub Releases API for `phuf2012/Reims-Manager`.
 
 ## Scope
 
@@ -28,7 +31,7 @@ This is a focused app, not a Virt Manager replacement. Reims does not use libvir
 3. Create a VM with Reims if you have not already. Reims Manager operates VMs created by Reims; it does not create VMs or download macOS.
 4. Open Reims Manager, select a VM, and choose **Start**. For USB passthrough, select the **USB devices** section, scan, choose a device, and attach it.
 
-The Debian package declares GTK 3, Python GTK bindings, `usbutils`, `acl`, and PolicyKit dependencies. It does not install Reims or create persistent host USB rules.
+The Debian package declares GTK 3, Python GTK bindings, `usbutils`, `acl`, and PolicyKit dependencies. Samba is a suggested optional package for shared folders. The package does not install Reims or create persistent host USB rules.
 
 ## USB notes
 
