@@ -1,3 +1,21 @@
+reims-manager (1.0.1-4) unstable; urgency=medium
+
+  * Release the 1.0.1 settings, shared-folder, and update features as stable.
+  * Give shared-folder actions direct status and prevent duplicate submissions.
+  * Improve save progress and feedback for VM settings and shared folders.
+  * Keep update checks opt-in and provide a direct Debian package link.
+
+ -- phuf2012 <245987108+phuf2012@users.noreply.github.com>  Sun, 22 Nov 2026 10:00:00 -0600
+
+reims-manager (1.0.1-2) unstable; urgency=medium
+
+  * Preserve saved display settings when starting a VM.
+  * Add refresh-rate and video-acceleration controls to both interfaces.
+  * Add an optional QEMU SMB shared-folder integration for macOS guests.
+  * Show start and shutdown progress and keep action errors visible.
+
+ -- phuf2012 <245987108+phuf2012@users.noreply.github.com>  Sun, 15 Nov 2026 14:13:14 -0600
+
 reims-manager (1.0-1) unstable; urgency=low
 
   * First public release for Linux desktop systems.
