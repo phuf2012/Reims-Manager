@@ -110,7 +110,7 @@
             <div class="status"><span id="status-dot" class="dot"></span><span id="status-text">Checking…</span></div>
           </div>
           <div class="toolbar">
-            <button id="start-btn" class="primary">Start fullscreen</button>
+            <button id="start-btn" class="primary">Start VM</button>
             <button id="stop-btn">Shut down</button>
             <button id="force-btn" class="danger">Force off</button>
             <button id="refresh-btn">Refresh</button>
@@ -135,6 +135,8 @@
 
         <div class="tabs">
           <button class="tab active" data-tab="settings">Settings</button>
+          <button class="tab" data-tab="share">Shared folder</button>
+          <button class="tab" data-tab="updates">Updates</button>
           <button class="tab" data-tab="usb">USB devices</button>
           <button class="tab" data-tab="logs">Logs</button>
         </div>
@@ -153,9 +155,13 @@
                 <label>Resolution
                   <select name="resolution"><option value="host">Match host screen</option><option>1920x1080</option><option>1600x900</option><option>1280x800</option><option>1280x720</option></select>
                 </label>
+                <label>Refresh rate
+                  <select name="refresh"><option value="host">Host refresh rate</option><option value="60">60 Hz</option><option value="120">120 Hz</option></select>
+                </label>
                 <label>Vulkan GPU
                   <select name="gpu" id="gpu-select"></select>
                 </label>
+                <label class="check"><input type="checkbox" name="video_acceleration" checked> Host video acceleration</label>
                 <label class="check"><input type="checkbox" name="borderless" checked> Borderless fullscreen</label>
                 <label class="check"><input type="checkbox" name="hidpi"> HiDPI (higher render load)</label>
                 <label class="check"><input type="checkbox" name="audio" checked> VM audio</label>
@@ -165,6 +171,37 @@
               <p class="hint">Stop the VM before saving settings. Fullscreen settings apply on its next start.</p>
               <button class="primary" type="submit">Save settings</button>
             </form>
+          </div>
+        </section>
+
+        <section class="tab-content" id="tab-share">
+          <div class="card">
+            <h2>Share a Linux folder with macOS</h2>
+            <p class="usb-note">The selected folder is writable from the guest while this VM runs. QEMU exposes it only on a private virtual network, not to your local network. Stop the VM before changing the folder.</p>
+            <form id="shared-folder-form">
+              <label>Linux folder path
+                <input id="shared-folder-path" name="path" type="text" placeholder="/home/you/Shared" autocomplete="off">
+              </label>
+              <div class="toolbar" style="margin-top:14px">
+                <button class="primary" type="submit">Save shared folder</button>
+                <button id="shared-folder-remove" type="button">Remove share</button>
+              </div>
+            </form>
+            <p id="shared-folder-status" class="hint" aria-live="polite">Loading shared folder status…</p>
+            <p class="hint">In macOS Finder, choose Go → Connect to Server and enter <code>smb://10.0.3.4/qemu</code>. QEMU needs Samba’s <code>smbd</code> on the Linux host; Reims Manager will not install it.</p>
+          </div>
+        </section>
+
+        <section class="tab-content" id="tab-updates">
+          <div class="card">
+            <h2>Reims Manager updates</h2>
+            <p class="usb-note">Check GitHub for a newer Reims Manager release. Enabling automatic checks checks now and on app launch, at most once per day. Updates are never downloaded or installed without your action.</p>
+            <label class="check"><input id="auto-update-check" type="checkbox"> Automatically check for updates</label>
+            <div class="toolbar" style="margin-top:14px">
+              <button id="check-updates" class="primary" type="button">Check for Updates</button>
+            </div>
+            <p id="update-status" class="hint" aria-live="polite">Installed version: 1.0.1</p>
+            <p><a id="update-link" hidden target="_blank" rel="noopener noreferrer">Download update</a></p>
           </div>
         </section>
 
@@ -197,6 +234,8 @@
     let selected = null;
     let latest = [];
     let gpuOptions = [];
+    let actionBusy = false;
+    let actionLabel = '';
 
     function toast(message, error=false) {
       const el = document.getElementById('toast');
@@ -216,7 +255,7 @@
         const button = document.createElement('button'); button.className = 'vm-item' + (vm.name === selected ? ' selected' : '');
         const label = document.createElement('span'); label.className = 'vm-name'; label.textContent = vm.name;
         const dot = document.createElement('span'); dot.className = 'dot' + (vm.state === 'running' ? ' running' : '');
-        button.append(label, dot); button.onclick = () => { selected = vm.name; render(); refreshUsb(); refreshLogs(); };
+        button.append(label, dot); button.onclick = () => { selected = vm.name; render(); refreshUsb(); refreshLogs(); refreshSharedFolder(); };
         list.append(button);
       }
     }
@@ -227,8 +266,12 @@
       const display = detail(vm, 'displays', '');
       const resolution = display.includes('host') ? 'host' : (display.match(/\d{3,5}x\d{3,5}/) || ['host'])[0];
       form.elements.resolution.value = [...form.elements.resolution.options].some(o => o.value === resolution) ? resolution : 'host';
+      const refresh = display.match(/(\d+)\s*Hz/i);
+      const refreshValue = refresh ? refresh[1] : 'host';
+      form.elements.refresh.value = [...form.elements.refresh.options].some(o => o.value === refreshValue) ? refreshValue : 'host';
       form.elements.borderless.checked = display.includes('borderless') || resolution === 'host';
       form.elements.hidpi.checked = display.includes('HiDPI');
+      form.elements.video_acceleration.checked = detail(vm, 'video', 'on').toLowerCase().startsWith('on');
       form.elements.audio.checked = detail(vm, 'audio', 'on').startsWith('on');
       form.elements.network.checked = !detail(vm, 'network', 'user').startsWith('off');
       form.elements.logs.checked = !detail(vm, 'logs', 'off').startsWith('off');
@@ -243,14 +286,20 @@
       document.getElementById('content').hidden = !vm;
       if (!vm) return;
       document.getElementById('vm-title').textContent = vm.name;
-      document.getElementById('status-text').textContent = vm.state;
+      document.getElementById('status-text').textContent = actionBusy ? actionLabel : vm.state;
       document.getElementById('status-dot').className = 'dot' + (vm.state === 'running' ? ' running' : '');
       document.getElementById('cpu-value').textContent = detail(vm, 'cpus');
       document.getElementById('memory-value').textContent = detail(vm, 'memory');
       document.getElementById('display-value').textContent = detail(vm, 'displays');
-      document.getElementById('start-btn').disabled = vm.state === 'running';
-      document.getElementById('stop-btn').disabled = vm.state !== 'running';
-      document.getElementById('force-btn').disabled = vm.state !== 'running';
+      document.getElementById('start-btn').disabled = actionBusy || vm.state === 'running';
+      document.getElementById('start-btn').textContent = actionBusy && actionLabel.startsWith('Starting') ? 'Starting…' : 'Start VM';
+      document.getElementById('stop-btn').disabled = actionBusy || vm.state !== 'running';
+      document.getElementById('stop-btn').textContent = actionBusy && actionLabel.startsWith('Stopping') ? 'Shutting down…' : 'Shut down';
+      document.getElementById('force-btn').disabled = actionBusy || vm.state !== 'running';
+      const sharePath = document.getElementById('shared-folder-path');
+      sharePath.disabled = actionBusy || vm.state === 'running';
+      document.getElementById('shared-folder-form').querySelector('button[type="submit"]').disabled = actionBusy || vm.state === 'running';
+      document.getElementById('shared-folder-remove').disabled = actionBusy || vm.state === 'running';
       const hardware = document.getElementById('hardware-list'); hardware.replaceChildren();
       for (const [key, title] of [['gpu','GPU'],['video','Graphics'],['audio','Audio'],['network','Network'],['disk','Disk']]) {
         const dt = document.createElement('dt'); dt.textContent = title;
@@ -271,10 +320,14 @@
       } catch (error) { toast(error.message, true); }
     }
     async function action(action) {
-      if (!selected) return;
+      if (!selected || actionBusy) return;
       if (action === 'force-stop' && !confirm('Power off the VM immediately? Unsaved guest work may be lost.')) return;
-      try { const data = await request('vm/action', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:selected,action})}); toast(data.message); await refreshState(); }
+      actionBusy = true;
+      actionLabel = action === 'start' ? 'Starting VM…' : (action === 'stop' ? 'Shutting down VM…' : 'Powering off VM…');
+      render();
+      try { const data = await request('vm/action', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:selected,action})}); toast(data.message); }
       catch (error) { toast(error.message, true); }
+      finally { actionBusy = false; actionLabel = ''; await refreshState(); }
     }
     async function refreshUsb() {
       const body = document.getElementById('usb-list');
@@ -315,9 +368,76 @@
         el.textContent='QEMU guest USB devices (info usb):\n'+data.guest_usb+'\n\nUSB passthrough devices (info qtree):\n'+data.passthrough_devices;
       } catch(error) { el.textContent=error.message; }
     }
+    async function refreshSharedFolder() {
+      if (!selected) return;
+      const status = document.getElementById('shared-folder-status');
+      status.textContent = 'Checking shared folder support…';
+      try {
+        const data = await request('shared-folder?name=' + encodeURIComponent(selected));
+        document.getElementById('shared-folder-path').value = data.path || '';
+        status.textContent = !data.smbd_available
+          ? 'Samba is required. Install it with `sudo apt install samba`; Reims Manager will not install it.'
+          : (data.path ? 'Ready. The guest has read and write access while running.' : 'No folder is shared with this VM yet.');
+      } catch (error) { status.textContent = error.message; }
+    }
+    function showUpdateResult(result) {
+      const status = document.getElementById('update-status');
+      const link = document.getElementById('update-link');
+      link.hidden = true;
+      if (result.update_available) {
+        status.textContent = `Update available: ${result.release_name} (version ${result.latest_version}).`;
+        link.href = result.download_url || result.release_url;
+        link.textContent = result.download_url ? 'Download .deb' : 'Open release page';
+        link.hidden = false;
+      } else {
+        status.textContent = `You're up to date. Installed version: ${result.current_version}; latest release: ${result.latest_version}.`;
+      }
+    }
+    async function checkForUpdates() {
+      const button = document.getElementById('check-updates');
+      const status = document.getElementById('update-status');
+      button.disabled = true;
+      button.textContent = 'Checking…';
+      status.textContent = 'Checking GitHub releases…';
+      document.getElementById('update-link').hidden = true;
+      try { showUpdateResult(await request('updates/check')); }
+      catch (error) { status.textContent = error.message; }
+      finally { button.disabled = false; button.textContent = 'Check for Updates'; }
+    }
+    async function loadUpdatePreferences() {
+      try {
+        const settings = await request('updates/settings');
+        document.getElementById('auto-update-check').checked = settings.auto_check;
+        document.getElementById('update-status').textContent = settings.last_checked
+          ? `Installed version: ${settings.current_version}. Last checked: ${new Date(settings.last_checked * 1000).toLocaleString()}.`
+          : `Installed version: ${settings.current_version}.`;
+        if (settings.auto_check && settings.check_due) checkForUpdates();
+      } catch (error) { document.getElementById('update-status').textContent = error.message; }
+    }
+    async function saveSharedFolder(path) {
+      if (!selected) return;
+      const status = document.getElementById('shared-folder-status');
+      const pathField = document.getElementById('shared-folder-path');
+      const saveButton = document.querySelector('#shared-folder-form button[type="submit"]');
+      const removeButton = document.getElementById('shared-folder-remove');
+      pathField.disabled = saveButton.disabled = removeButton.disabled = true;
+      status.textContent = 'Saving shared folder…';
+      try {
+        const result = await request('shared-folder', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:selected,path})});
+        toast(result.message || 'Shared folder saved.');
+        await refreshState();
+        await refreshSharedFolder();
+      } catch (error) { status.textContent = error.message; toast(error.message, true); }
+      finally {
+        const vm = latest.find(item => item.name === selected);
+        const disabled = actionBusy || !vm || vm.state === 'running';
+        pathField.disabled = saveButton.disabled = removeButton.disabled = disabled;
+      }
+    }
     document.querySelectorAll('.tab').forEach(button=>button.addEventListener('click',()=>{
       document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b===button));
       document.querySelectorAll('.tab-content').forEach(section=>section.classList.toggle('active',section.id===`tab-${button.dataset.tab}`));
+      if(button.dataset.tab==='share') refreshSharedFolder();
       if(button.dataset.tab==='usb') { refreshUsb(); refreshUsbDiagnostics(); } if(button.dataset.tab==='logs') refreshLogs();
     }));
     document.getElementById('start-btn').onclick=()=>action('start');
@@ -332,15 +452,37 @@
     document.getElementById('usb-refresh').onclick=refreshUsb;
     document.getElementById('usb-diagnostics-refresh').onclick=refreshUsbDiagnostics;
     document.getElementById('logs-refresh').onclick=refreshLogs;
+    document.getElementById('shared-folder-form').onsubmit=event=>{
+      event.preventDefault();
+      saveSharedFolder(document.getElementById('shared-folder-path').value.trim());
+    };
+    document.getElementById('shared-folder-remove').onclick=()=>saveSharedFolder('');
+    document.getElementById('check-updates').onclick=checkForUpdates;
+    document.getElementById('auto-update-check').onchange=async event=>{
+      const checkbox=event.currentTarget;
+      checkbox.disabled=true;
+      try {
+        const settings=await request('updates/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({auto_check:checkbox.checked})});
+        document.getElementById('update-status').textContent=settings.auto_check
+          ? 'Automatic checks are on. The app checks on launch, at most once per day.'
+          : 'Automatic checks are off.';
+        if(settings.auto_check) await checkForUpdates();
+      } catch(error) { toast(error.message,true); checkbox.checked=!checkbox.checked; }
+      finally { checkbox.disabled=false; }
+    };
     document.getElementById('settings-form').onsubmit=async event=>{
       event.preventDefault(); if(!selected)return;
       if(latest.find(v=>v.name===selected)?.state==='running'){toast('Shut down the VM before saving settings.',true);return;}
       const form=event.currentTarget;
-      const payload={name:selected,cpus:form.elements.cpus.value,memory:form.elements.memory.value,resolution:form.elements.resolution.value,gpu:form.elements.gpu.value,borderless:form.elements.borderless.checked,hidpi:form.elements.hidpi.checked,audio:form.elements.audio.checked,network:form.elements.network.checked,logs:form.elements.logs.checked};
+      const saveButton=form.querySelector('button[type="submit"]');
+      saveButton.disabled=true;
+      saveButton.textContent='Saving…';
+      const payload={name:selected,cpus:form.elements.cpus.value,memory:form.elements.memory.value,resolution:form.elements.resolution.value,refresh:form.elements.refresh.value,gpu:form.elements.gpu.value,borderless:form.elements.borderless.checked,hidpi:form.elements.hidpi.checked,video_acceleration:form.elements.video_acceleration.checked,audio:form.elements.audio.checked,network:form.elements.network.checked,logs:form.elements.logs.checked};
       try{const result=await request('vm/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});toast(result.message||'Settings saved.');await refreshState();}
       catch(error){toast(error.message,true);}
+      finally{saveButton.textContent='Save settings';saveButton.disabled=latest.find(v=>v.name===selected)?.state==='running';}
     };
-    refreshState(); setInterval(refreshState,5000);
+    refreshState(); setInterval(refreshState,5000); loadUpdatePreferences();
   </script>
 </body>
 </html>
