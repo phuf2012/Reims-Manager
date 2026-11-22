@@ -6,6 +6,7 @@ from __future__ import annotations
 import re
 import sys
 import threading
+import time
 
 import gi
 gi.require_version("Gtk", "3.0")
@@ -19,6 +20,8 @@ class ReimsManager(Gtk.Application):
         super().__init__(application_id="local.reims.Manager")
         self.vm_rows = []
         self.gpu_rows = []
+        self.action_in_progress = False
+        self.status_after_refresh = None
         self.set_flags(Gio.ApplicationFlags.NON_UNIQUE)
 
     def do_activate(self):
@@ -60,17 +63,133 @@ class ReimsManager(Gtk.Application):
         self.stop_button.set_sensitive(False)
 
         self.status = Gtk.Label(xalign=0)
+        self.status.set_line_wrap(True)
+        self.status.set_selectable(True)
         root.pack_start(self.status, False, False, 0)
 
         tabs = Gtk.Notebook()
         root.pack_start(tabs, True, True, 0)
         tabs.append_page(self.build_overview_page(), Gtk.Label(label="Overview"))
         tabs.append_page(self.build_settings_page(), Gtk.Label(label="Settings"))
+        tabs.append_page(self.build_shared_folder_page(), Gtk.Label(label="Shared folder"))
+        tabs.append_page(self.build_updates_page(), Gtk.Label(label="Updates"))
         tabs.append_page(self.build_usb_page(), Gtk.Label(label="USB devices"))
         tabs.append_page(self.build_logs_page(), Gtk.Label(label="Logs"))
 
         self.window.show_all()
         self.refresh_vms()
+        self.load_update_preferences()
+
+    def build_updates_page(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        page.set_border_width(18)
+        heading = Gtk.Label()
+        heading.set_markup("<big><b>Reims Manager updates</b></big>")
+        heading.set_xalign(0)
+        page.pack_start(heading, False, False, 0)
+
+        explanation = Gtk.Label(
+            label="Check GitHub for a newer Reims Manager release. Enabling automatic checks checks now and on app launch, at most once per day. Updates are never downloaded or installed without your action.",
+            xalign=0,
+        )
+        explanation.set_line_wrap(True)
+        page.pack_start(explanation, False, False, 0)
+
+        preference_row = Gtk.Box(spacing=12)
+        preference_label = Gtk.Label(label="Automatically check for updates", xalign=0)
+        preference_label.set_hexpand(True)
+        preference_row.pack_start(preference_label, True, True, 0)
+        self.auto_update_switch = Gtk.Switch()
+        self.auto_update_switch.connect("notify::active", self.on_auto_update_changed)
+        preference_row.pack_start(self.auto_update_switch, False, False, 0)
+        page.pack_start(preference_row, False, False, 0)
+
+        self.check_updates_button = Gtk.Button(label="Check for Updates")
+        self.check_updates_button.set_halign(Gtk.Align.START)
+        self.check_updates_button.connect("clicked", lambda *_: self.check_for_updates())
+        page.pack_start(self.check_updates_button, False, False, 0)
+
+        self.update_status = Gtk.Label(label=f"Installed version: {backend.APP_VERSION}", xalign=0)
+        self.update_status.set_line_wrap(True)
+        self.update_status.set_selectable(True)
+        page.pack_start(self.update_status, False, False, 0)
+
+        self.update_link = Gtk.LinkButton.new_with_label(
+            "https://github.com/phuf2012/Reims-Manager/releases",
+            "Open GitHub releases",
+        )
+        self.update_link.set_halign(Gtk.Align.START)
+        self.update_link.set_no_show_all(True)
+        self.update_link.set_visible(False)
+        page.pack_start(self.update_link, False, False, 0)
+        return page
+
+    def load_update_preferences(self):
+        def done(settings, error):
+            if error:
+                self.update_status.set_text(error)
+                return False
+            self.loading_update_preferences = True
+            self.auto_update_switch.set_active(settings["auto_check"])
+            self.loading_update_preferences = False
+            if settings["last_checked"]:
+                self.update_status.set_text(
+                    f"Installed version: {backend.APP_VERSION}. Last checked: "
+                    f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(settings['last_checked']))}."
+                )
+            if settings["auto_check"] and settings["check_due"]:
+                self.check_for_updates()
+            return False
+
+        self.background(backend.update_settings_status, done, set_status=False)
+
+    def on_auto_update_changed(self, switch, *_):
+        if getattr(self, "loading_update_preferences", False):
+            return
+        enabled = switch.get_active()
+        self.update_status.set_text("Saving update preference…")
+
+        def done(settings, error):
+            if error:
+                self.update_status.set_text(error)
+            else:
+                self.update_status.set_text(
+                    "Automatic update checks are on." if settings["auto_check"]
+                    else "Automatic update checks are off."
+                )
+                if settings["auto_check"]:
+                    self.check_for_updates()
+            return False
+
+        self.background(lambda: backend.save_update_settings(enabled), done, set_status=False)
+
+    def check_for_updates(self):
+        self.check_updates_button.set_sensitive(False)
+        self.update_status.set_text("Checking GitHub releases…")
+        self.update_link.set_visible(False)
+
+        def done(result, error):
+            self.check_updates_button.set_sensitive(True)
+            if error:
+                self.update_status.set_text(error)
+                return False
+            if result["update_available"]:
+                self.update_status.set_text(
+                    f"Update available: {result['release_name']} (version {result['latest_version']})."
+                )
+                self.update_link.set_uri(result["download_url"] or result["release_url"])
+                self.update_link.set_label(
+                    "Download .deb" if result["download_url"] else "Open release page"
+                )
+                self.update_link.set_visible(True)
+            else:
+                self.update_status.set_text(
+                    f"You're up to date. Installed version: {result['current_version']}; "
+                    f"latest release: {result['latest_version']}."
+                )
+            return False
+
+        self.background(backend.check_for_updates, done, set_status=False)
 
     def build_overview_page(self):
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -116,6 +235,8 @@ class ReimsManager(Gtk.Application):
         self.gpu_combo = Gtk.ComboBoxText()
         self.gpu_combo.append("auto", "Auto select")
         self.add_setting_row(grid, 2, "Graphics device", self.gpu_combo)
+        self.video_acceleration_switch = Gtk.Switch()
+        self.add_setting_row(grid, 3, "Video acceleration", self.video_acceleration_switch)
 
         self.resolution_combo = Gtk.ComboBoxText()
         for value, label in (
@@ -126,18 +247,24 @@ class ReimsManager(Gtk.Application):
             ("1280x720", "1280 × 720"),
         ):
             self.resolution_combo.append(value, label)
-        self.add_setting_row(grid, 3, "Resolution", self.resolution_combo)
+        self.add_setting_row(grid, 4, "Resolution", self.resolution_combo)
+
+        self.refresh_combo = Gtk.ComboBoxText()
+        self.refresh_combo.append("host", "Host refresh rate")
+        self.refresh_combo.append("60", "60 Hz")
+        self.refresh_combo.append("120", "120 Hz")
+        self.add_setting_row(grid, 5, "Refresh rate", self.refresh_combo)
 
         self.hidpi_switch = Gtk.Switch()
-        self.add_setting_row(grid, 4, "HiDPI display", self.hidpi_switch)
+        self.add_setting_row(grid, 6, "HiDPI display", self.hidpi_switch)
         self.borderless_switch = Gtk.Switch()
-        self.add_setting_row(grid, 5, "Borderless window", self.borderless_switch)
+        self.add_setting_row(grid, 7, "Borderless window", self.borderless_switch)
         self.audio_switch = Gtk.Switch()
-        self.add_setting_row(grid, 6, "Audio", self.audio_switch)
+        self.add_setting_row(grid, 8, "Audio", self.audio_switch)
         self.network_switch = Gtk.Switch()
-        self.add_setting_row(grid, 7, "Network", self.network_switch)
+        self.add_setting_row(grid, 9, "Network", self.network_switch)
         self.logs_switch = Gtk.Switch()
-        self.add_setting_row(grid, 8, "Diagnostic logs", self.logs_switch)
+        self.add_setting_row(grid, 10, "Diagnostic logs", self.logs_switch)
 
         self.save_settings_button = Gtk.Button(label="Save settings")
         self.save_settings_button.set_halign(Gtk.Align.START)
@@ -146,6 +273,102 @@ class ReimsManager(Gtk.Application):
         self.settings_controls.append(self.save_settings_button)
         self.set_settings_sensitive(False)
         return page
+
+    def build_shared_folder_page(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        page.set_border_width(18)
+        heading = Gtk.Label()
+        heading.set_markup("<big><b>Share a Linux folder with macOS</b></big>")
+        heading.set_xalign(0)
+        page.pack_start(heading, False, False, 0)
+
+        explanation = Gtk.Label(
+            label="The selected folder is writable from the guest while this VM runs. QEMU exposes it only on a private virtual network; it is not shared to your local network. Stop the VM before changing the folder.",
+            xalign=0,
+        )
+        explanation.set_line_wrap(True)
+        page.pack_start(explanation, False, False, 0)
+
+        self.share_path_label = Gtk.Label(label="No folder selected", xalign=0)
+        self.share_path_label.set_selectable(True)
+        page.pack_start(self.share_path_label, False, False, 0)
+
+        self.share_status_label = Gtk.Label(xalign=0)
+        self.share_status_label.set_line_wrap(True)
+        page.pack_start(self.share_status_label, False, False, 0)
+
+        actions = Gtk.Box(spacing=8)
+        self.share_choose_button = Gtk.Button(label="Choose folder…")
+        self.share_choose_button.connect("clicked", self.choose_shared_folder)
+        actions.pack_start(self.share_choose_button, False, False, 0)
+        self.share_remove_button = Gtk.Button(label="Remove share")
+        self.share_remove_button.connect("clicked", lambda *_: self.set_shared_folder(""))
+        actions.pack_start(self.share_remove_button, False, False, 0)
+        page.pack_start(actions, False, False, 0)
+        self.share_controls = [self.share_choose_button, self.share_remove_button]
+        for control in self.share_controls:
+            control.set_sensitive(False)
+
+        self.share_connect_label = Gtk.Label(
+            label=f"In macOS, open Finder → Go → Connect to Server and enter {backend.SHARE_URL}.",
+            xalign=0,
+        )
+        self.share_connect_label.set_line_wrap(True)
+        page.pack_start(self.share_connect_label, False, False, 0)
+        return page
+
+    def choose_shared_folder(self, *_):
+        dialog = Gtk.FileChooserDialog(
+            title="Choose a folder to share with macOS",
+            parent=self.window,
+            action=Gtk.FileChooserAction.SELECT_FOLDER,
+            buttons=(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, "Share folder", Gtk.ResponseType.OK),
+        )
+        try:
+            if dialog.run() == Gtk.ResponseType.OK:
+                self.set_shared_folder(dialog.get_filename())
+        finally:
+            dialog.destroy()
+
+    def set_shared_folder(self, path):
+        name = self.selected_vm()
+        if not name:
+            return
+
+        for control in self.share_controls:
+            control.set_sensitive(False)
+        self.share_status_label.set_text("Saving shared-folder settings…")
+
+        def done(result, error):
+            self.share_status_label.set_text(error or result or "Shared-folder settings saved.")
+            self.status_after_refresh = error or result or "Shared folder settings saved."
+            self.refresh_vms()
+            return False
+
+        self.background(
+            lambda: backend.configure_shared_folder(name, path),
+            done,
+            status="Saving shared folder…",
+        )
+
+    def show_shared_folder(self, details):
+        try:
+            path = backend.shared_folder_path(details)
+        except backend.ManagerError as exc:
+            self.share_path_label.set_text("Could not read the saved share setting.")
+            self.share_status_label.set_text(str(exc))
+            return
+        self.share_path_label.set_text(path or "No folder selected")
+        if path and not backend.smbd_path():
+            self.share_status_label.set_text(
+                "Samba is needed for QEMU folder sharing. Install it with `sudo apt install samba`; Reims Manager will not install it."
+            )
+        elif path:
+            self.share_status_label.set_text("Ready. The guest gets read and write access while the VM is running.")
+        else:
+            self.share_status_label.set_text(
+                "Requires Samba's smbd on the Linux host. Choose a folder to make it available in Finder."
+            )
 
     def add_setting_row(self, grid, row, title, control):
         label = Gtk.Label(label=title, xalign=0)
@@ -224,8 +447,9 @@ class ReimsManager(Gtk.Application):
     def set_text(self, panel, value):
         panel[1].set_text(str(value))
 
-    def background(self, work, done):
-        self.status.set_text("Working…")
+    def background(self, work, done, status="Working…", set_status=True):
+        if set_status:
+            self.status.set_text(status)
 
         def task():
             try:
@@ -247,6 +471,8 @@ class ReimsManager(Gtk.Application):
                 self.start_button.set_sensitive(False)
                 self.stop_button.set_sensitive(False)
                 self.set_settings_sensitive(False)
+                for control in getattr(self, "share_controls", []):
+                    control.set_sensitive(False)
                 self.overview.set_text(
                     "Welcome to Reims Manager\n\n"
                     "Install Reims vGPU and create a VM to get started. This app manages VMs created by Reims; it does not create a VM or download macOS.\n\n"
@@ -261,12 +487,17 @@ class ReimsManager(Gtk.Application):
             if rows:
                 names = [row["name"] for row in rows]
                 self.vm_select.set_active_id(previous if previous in names else names[0])
+                if self.status_after_refresh:
+                    self.status.set_text(self.status_after_refresh)
+                    self.status_after_refresh = None
             else:
                 self.status.set_text("No Reims VMs found. Create one with Reims, then refresh.")
                 self.overview.set_text("No virtual machines found\n\nCreate a VM with Reims, then choose Refresh.")
                 self.start_button.set_sensitive(False)
                 self.stop_button.set_sensitive(False)
                 self.set_settings_sensitive(False)
+                for control in self.share_controls:
+                    control.set_sensitive(False)
 
         self.background(backend.list_vms, done)
 
@@ -289,9 +520,12 @@ class ReimsManager(Gtk.Application):
         )
         self.overview.set_text("\n".join(f"{label}:  {value}" for label, value in fields))
         running = state == "running"
-        self.start_button.set_sensitive(not running)
-        self.stop_button.set_sensitive(running)
-        self.set_settings_sensitive(not running)
+        self.start_button.set_sensitive(not running and not self.action_in_progress)
+        self.stop_button.set_sensitive(running and not self.action_in_progress)
+        self.set_settings_sensitive(not running and not self.action_in_progress)
+        for control in self.share_controls:
+            control.set_sensitive(not running and not self.action_in_progress)
+        self.show_shared_folder(details)
         self.refresh_usb()
         self.load_settings(name, details)
 
@@ -304,8 +538,14 @@ class ReimsManager(Gtk.Application):
         resolution = re.search(r"(?:host|\d+x\d+)", display)
         resolution_id = resolution.group(0) if resolution else "host"
         self.resolution_combo.set_active_id(resolution_id if resolution_id in ("host", "1920x1080", "1600x900", "1280x800", "1280x720") else "host")
+        refresh = re.search(r"(\d+)\s*Hz", display, re.IGNORECASE)
+        refresh_id = refresh.group(1) if refresh else "host"
+        self.refresh_combo.set_active_id(refresh_id if refresh_id in ("60", "120") else "host")
         self.borderless_switch.set_active("borderless" in display.lower())
         self.hidpi_switch.set_active("hidpi" in display.lower())
+        self.video_acceleration_switch.set_active(
+            details.get("video", "on").lower().startswith("on")
+        )
         self.audio_switch.set_active(details.get("audio", "off").lower() == "on")
         self.network_switch.set_active(details.get("network", "off").lower() not in ("off", "disabled", "none"))
         self.logs_switch.set_active(details.get("logs", "off").lower() == "on")
@@ -341,11 +581,15 @@ class ReimsManager(Gtk.Application):
         name = self.selected_vm()
         if not name:
             return
+        self.set_settings_sensitive(False)
+        self.status.set_text("Saving VM settings…")
         payload = {
             "cpus": self.cpu_spin.get_value_as_int(),
             "memory": self.memory_combo.get_active_id() or "16",
             "gpu": self.gpu_combo.get_active_id() or "auto",
             "resolution": self.resolution_combo.get_active_id() or "host",
+            "refresh": self.refresh_combo.get_active_id() or "host",
+            "video_acceleration": self.video_acceleration_switch.get_active(),
             "hidpi": self.hidpi_switch.get_active(),
             "borderless": self.borderless_switch.get_active(),
             "audio": self.audio_switch.get_active(),
@@ -354,7 +598,7 @@ class ReimsManager(Gtk.Application):
         }
 
         def done(result, error):
-            self.status.set_text(error or result or "Settings saved. They apply the next time the VM starts.")
+            self.status_after_refresh = error or result or "Settings saved. They apply the next time the VM starts."
             self.refresh_vms()
             return False
 
@@ -362,15 +606,26 @@ class ReimsManager(Gtk.Application):
 
     def run_action(self, action):
         name = self.selected_vm()
-        if not name:
+        if not name or self.action_in_progress:
             return
+        self.action_in_progress = True
+        self.vm_select.set_sensitive(False)
+        self.refresh_button.set_sensitive(False)
+        self.start_button.set_sensitive(False)
+        self.stop_button.set_sensitive(False)
+        self.set_settings_sensitive(False)
+        verb = "Starting" if action == "start" else "Stopping"
         self.background(
             lambda: backend.do_action(name, action),
             lambda result, error: self.action_done(result, error),
+            status=f"{verb} {name}…",
         )
 
     def action_done(self, result, error):
-        self.status.set_text(error or result or "Done")
+        self.action_in_progress = False
+        self.vm_select.set_sensitive(True)
+        self.refresh_button.set_sensitive(True)
+        self.status_after_refresh = error or result or "Done"
         self.refresh_vms()
         return False
 
