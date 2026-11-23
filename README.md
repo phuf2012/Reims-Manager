@@ -2,7 +2,7 @@
 
 Reims Manager is a native GTK desktop app for managing virtual machines created by [Reims vGPU](https://github.com/steelbrain/reims-vgpu). It currently targets Linux desktop systems such as Linux Mint and Ubuntu.
 
-## Reims Manager 1.0.2-2 — Pre-Release
+## Reims Manager 1.0.2-3 — Pre-Release
 
 This pre-release focuses on USB passthrough reliability and a simpler connect/return workflow.
 
@@ -14,6 +14,8 @@ This pre-release focuses on USB passthrough reliability and a simpler connect/re
 - Improved progress and status messages in the GTK and browser interfaces.
 - Safely unmounts mounted USB drive volumes from Linux during connection, then passes the whole USB device to the VM.
 - Restores Mint's Apple USB service after an interrupted iPhone attach when QEMU no longer has a manager-owned USB device attached.
+- Detects the VM's active USB controller and hotplugs to that bus; it no longer assumes every VM has a dedicated `hostpass.0` controller.
+- Correctly recognizes mounted partitions belonging to a USB disk before attempting the safe unmount.
 
 The guest operating system still needs its own drivers to recognize a passed-through device. Linux gives up access while the VM owns it. USB volumes that Linux currently has mounted are unmounted before passthrough; open files or transfers can make Linux refuse the unmount, in which case the app explains what to close. The manager does not install system rules or persist device permissions.
 
