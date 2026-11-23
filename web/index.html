@@ -200,7 +200,7 @@
             <div class="toolbar" style="margin-top:14px">
               <button id="check-updates" class="primary" type="button">Check for Updates</button>
             </div>
-            <p id="update-status" class="hint" aria-live="polite">Installed version: 1.0.2-2</p>
+            <p id="update-status" class="hint" aria-live="polite">Installed version: 1.0.2-3</p>
             <p><a id="update-link" hidden target="_blank" rel="noopener noreferrer">Download update</a></p>
           </div>
         </section>
@@ -407,7 +407,7 @@
       el.textContent='Querying QEMU…';
       try {
         const data=await request('usb/diagnostics?name='+encodeURIComponent(selected));
-        el.textContent='QEMU guest USB devices (info usb):\n'+data.guest_usb+'\n\nUSB passthrough devices (info qtree):\n'+data.passthrough_devices;
+        el.textContent='Passthrough controller: '+(data.hotplug_bus||'not found')+'\n\nQEMU guest USB devices (info usb):\n'+data.guest_usb+'\n\nUSB passthrough devices (info qtree):\n'+data.passthrough_devices;
       } catch(error) { el.textContent=error.message; }
     }
     async function refreshSharedFolder() {
