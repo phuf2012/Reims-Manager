@@ -2,7 +2,7 @@
 
 Reims Manager is a native GTK desktop app for managing virtual machines created by [Reims vGPU](https://github.com/steelbrain/reims-vgpu). It currently targets Linux desktop systems such as Linux Mint and Ubuntu.
 
-## Reims Manager 1.0.2-1 — Pre-Release
+## Reims Manager 1.0.2-2 — Pre-Release
 
 This pre-release focuses on USB passthrough reliability and a simpler connect/return workflow.
 
@@ -12,8 +12,10 @@ This pre-release focuses on USB passthrough reliability and a simpler connect/re
 - USB troubleshooting details are tucked into an optional section; the main list focuses on the device, its status, and the action.
 - USB state files are written atomically with private file permissions.
 - Improved progress and status messages in the GTK and browser interfaces.
+- Safely unmounts mounted USB drive volumes from Linux during connection, then passes the whole USB device to the VM.
+- Restores Mint's Apple USB service after an interrupted iPhone attach when QEMU no longer has a manager-owned USB device attached.
 
-The guest operating system still needs its own drivers to recognize a passed-through device. Linux gives up access while the VM owns it. The manager does not install system rules or persist device permissions.
+The guest operating system still needs its own drivers to recognize a passed-through device. Linux gives up access while the VM owns it. USB volumes that Linux currently has mounted are unmounted before passthrough; open files or transfers can make Linux refuse the unmount, in which case the app explains what to close. The manager does not install system rules or persist device permissions.
 
 ## Reims Manager 1.0.1 — Stable
 
@@ -44,7 +46,7 @@ This is a focused app, not a Virt Manager replacement. Reims does not use libvir
 3. Create a VM with Reims if you have not already. Reims Manager operates VMs created by Reims; it does not create VMs or download macOS.
 4. Open Reims Manager, select a VM, and choose **Start**. For USB passthrough, open **USB devices**, select a listed device, and choose **Connect to VM**. Choose **Return to Linux** when finished.
 
-The Debian package declares GTK 3, Python GTK bindings, `usbutils`, `acl`, and PolicyKit dependencies. Samba is a suggested optional package for shared folders. The package does not install Reims or create persistent host USB rules.
+The Debian package declares GTK 3, Python GTK bindings, `usbutils`, `acl`, `udisks2`, and PolicyKit dependencies. Samba is a suggested optional package for shared folders. The package does not install Reims or create persistent host USB rules.
 
 ## USB notes
 
