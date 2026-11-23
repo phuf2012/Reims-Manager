@@ -21,6 +21,8 @@ class ReimsManager(Gtk.Application):
         self.vm_rows = []
         self.gpu_rows = []
         self.action_in_progress = False
+        self.usb_action_in_progress = False
+        self.usb_scan_in_progress = False
         self.status_after_refresh = None
         self.set_flags(Gio.ApplicationFlags.NON_UNIQUE)
 
@@ -385,7 +387,7 @@ class ReimsManager(Gtk.Application):
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         page.set_border_width(14)
         hint = Gtk.Label(
-            label="Attach gives the selected device to the VM. Linux cannot use it until it is detached or the VM stops. Do not attach the keyboard or mouse you use to control this computer.",
+            label="Select a device, then choose Connect to VM. Choose Return to Linux when you are done. Safely eject storage first. Linux cannot use a device while it is connected to the VM. Do not pass through the keyboard or mouse you use to control this computer.",
             xalign=0,
         )
         hint.set_line_wrap(True)
@@ -393,7 +395,7 @@ class ReimsManager(Gtk.Application):
 
         self.usb_store = Gtk.ListStore(str, str, str, str, str, bool)
         self.usb_view = Gtk.TreeView(model=self.usb_store)
-        for title, col in (("Device", 0), ("USB ID", 1), ("Bus / address", 2), ("State", 3)):
+        for title, col in (("Device", 0), ("Status", 3)):
             renderer = Gtk.CellRendererText()
             self.usb_view.append_column(Gtk.TreeViewColumn(title, renderer, text=col))
         self.usb_view.get_selection().connect("changed", self.on_usb_selection)
@@ -404,19 +406,30 @@ class ReimsManager(Gtk.Application):
 
         toolbar = Gtk.Box(spacing=8)
         page.pack_start(toolbar, False, False, 0)
-        scan = Gtk.Button(label="Scan USB devices")
+        scan = Gtk.Button(label="Scan now")
         scan.connect("clicked", lambda *_: self.refresh_usb())
         toolbar.pack_start(scan, False, False, 0)
-        self.usb_action_button = Gtk.Button(label="Attach selected")
+        self.usb_scan_button = scan
+        self.usb_action_button = Gtk.Button(label="Connect to VM")
         self.usb_action_button.set_sensitive(False)
         self.usb_action_button.connect("clicked", self.on_usb_action)
         toolbar.pack_start(self.usb_action_button, False, False, 0)
+        troubleshooting = Gtk.Expander(label="USB troubleshooting")
+        advanced = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         diag = Gtk.Button(label="Check guest USB bus")
+        diag.set_halign(Gtk.Align.START)
         diag.connect("clicked", lambda *_: self.refresh_diagnostics())
-        toolbar.pack_start(diag, False, False, 0)
-
+        advanced.pack_start(diag, False, False, 0)
+        hint = Gtk.Label(
+            label="If connected here but missing in macOS, check System Settings → General → About → System Report → USB. For drives, check Disk Utility → View → Show All Devices. Do not erase a disk unless you intend to wipe it.",
+            xalign=0,
+        )
+        hint.set_line_wrap(True)
+        advanced.pack_start(hint, False, False, 0)
         self.diagnostics = self.text_panel()
-        page.pack_start(self.diagnostics[0], True, True, 0)
+        advanced.pack_start(self.diagnostics[0], True, True, 0)
+        troubleshooting.add(advanced)
+        page.pack_start(troubleshooting, True, True, 0)
         return page
 
     def build_logs_page(self):
@@ -631,10 +644,14 @@ class ReimsManager(Gtk.Application):
 
     def refresh_usb(self):
         name = self.selected_vm()
-        if not name:
+        if not name or self.usb_scan_in_progress:
             return
+        self.usb_scan_in_progress = True
+        self.usb_scan_button.set_sensitive(False)
 
         def done(rows, error):
+            self.usb_scan_in_progress = False
+            self.usb_scan_button.set_sensitive(True)
             self.usb_store.clear()
             if error:
                 self.usb_store.append([error, "", "", "", "", False])
@@ -644,14 +661,16 @@ class ReimsManager(Gtk.Application):
                 if device["vendor"] == "1d6b" or "keyboard" in description or "mouse" in description:
                     continue
                 state = (
-                    "Attached to VM" if device.get("attached_to_running_vm")
-                    else "In use by host" if not device.get("available_on_host", True)
-                    else "Available"
+                    "Connected to VM" if device.get("attached_to_running_vm") and device.get("available_on_host", True)
+                    else "In use by VM" if device.get("attached_to_running_vm")
+                    else "Returned to Linux" if device.get("attached")
+                    else "In use by another app" if not device.get("available_on_host", True)
+                    else "Available in Linux"
                 )
                 self.usb_store.append([
                     device["description"],
-                    f"{device['vendor']}:{device['product']}",
-                    f"{device['bus']} / {device['address']}",
+                    "",
+                    "",
                     state,
                     device["id"],
                     bool(device.get("attached")),
@@ -661,11 +680,18 @@ class ReimsManager(Gtk.Application):
 
     def on_usb_selection(self, selection):
         model, itr = selection.get_selected()
-        self.usb_action_button.set_sensitive(bool(itr))
+        if self.usb_action_in_progress:
+            self.usb_action_button.set_sensitive(False)
+            return
+        running = any(row["name"] == self.selected_vm() and row["state"] == "running" for row in self.vm_rows)
+        available = bool(itr) and (model[itr][5] or running)
+        self.usb_action_button.set_sensitive(available and not self.usb_action_in_progress)
         if itr:
-            self.usb_action_button.set_label("Detach selected" if model[itr][5] else "Attach selected")
+            self.usb_action_button.set_label("Return to Linux" if model[itr][5] else "Connect to VM")
 
     def on_usb_action(self, *_):
+        if self.usb_action_in_progress:
+            return
         model, itr = self.usb_view.get_selection().get_selected()
         if not itr:
             return
@@ -675,12 +701,17 @@ class ReimsManager(Gtk.Application):
             self.status.set_text("Rescan USB devices and select a device again.")
             return
         action = "detach" if model[itr][5] else "attach"
+        self.usb_action_in_progress = True
+        self.usb_action_button.set_sensitive(False)
+        self.usb_scan_button.set_sensitive(False)
+        self.usb_action_button.set_label("Returning…" if action == "detach" else "Connecting…")
         self.background(
             lambda: backend.usb_action(name, action, usb_id),
             lambda result, error: self.usb_done(result, error),
         )
 
     def usb_done(self, result, error):
+        self.usb_action_in_progress = False
         self.status.set_text(error or result or "Done")
         self.refresh_usb()
         self.refresh_diagnostics()
