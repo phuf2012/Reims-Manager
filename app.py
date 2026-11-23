@@ -35,7 +35,7 @@ USB_STATE_FILE = CONFIG_DIR / "usb-devices.json"
 USB_HOST_STATE_FILE = CONFIG_DIR / "usb-host-state.json"
 UPDATE_SETTINGS_FILE = CONFIG_DIR / "update-settings.json"
 REIMS = shutil.which("reims-ctl") or str(HOME / ".cargo" / "bin" / "reims-ctl")
-APP_VERSION = "1.0.2-1"
+APP_VERSION = "1.0.2-2"
 APP_PRERELEASE = True
 GITHUB_RELEASES_URL = "https://api.github.com/repos/phuf2012/Reims-Manager/releases?per_page=20"
 UPDATE_CHECK_INTERVAL = 24 * 60 * 60
@@ -465,6 +465,16 @@ def list_usb_devices(name: str) -> list[dict]:
                 restore_usbmuxd_if_needed(name, state)
         except ManagerError:
             pass  # Keep the saved rows if the VM monitor is briefly unavailable.
+    elif vm["state"] == "running" and read_usb_host_state().get(name):
+        # Recover a stale iPhone-service hold after an interrupted attach/detach.
+        # Do not restart usbmuxd if QEMU still has any manager-owned USB device.
+        try:
+            with QMP(str(qmp_path(vm))) as qmp:
+                tree = qmp_hmp(qmp, "info qtree")
+            if "reims_usb_" not in tree:
+                restore_usbmuxd_if_needed(name, {})
+        except ManagerError:
+            pass
     try:
         result = subprocess.run(
             ["lsusb"], check=False, capture_output=True, text=True, timeout=10
@@ -664,6 +674,10 @@ def usb_node_path(device: dict) -> Path:
 
 def usb_node_matches(device: dict) -> bool:
     """Confirm the transient USB address still belongs to the selected device."""
+    return usb_sysfs_node(device) is not None
+
+
+def usb_sysfs_node(device: dict) -> Path | None:
     for node in Path("/sys/bus/usb/devices").glob("*"):
         try:
             bus = int((node / "busnum").read_text().strip())
@@ -676,8 +690,86 @@ def usb_node_matches(device: dict) -> bool:
             int(device["bus"]), int(device["address"]),
             str(device["vendor"]).lower(), str(device["product"]).lower(),
         ):
-            return True
-    return False
+            return node.resolve()
+    return None
+
+
+def unmount_usb_storage(device: dict) -> list[str]:
+    """Safely unmount mounted partitions on this USB disk before QEMU opens it."""
+    usb_root = usb_sysfs_node(device)
+    if usb_root is None:
+        raise ManagerError("That USB device disconnected or changed identity. Scan and retry.")
+    lsblk = shutil.which("lsblk")
+    if not lsblk:
+        raise ManagerError("Cannot safely prepare USB storage because lsblk is missing.")
+    try:
+        result = subprocess.run(
+            [lsblk, "--json", "--paths", "--output", "PATH,TYPE,MOUNTPOINTS"],
+            check=False, capture_output=True, text=True, timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ManagerError(f"Could not check whether this USB drive is mounted: {exc}") from exc
+    if result.returncode:
+        raise ManagerError((result.stderr or "Could not inspect mounted drives.").strip())
+    try:
+        block_devices = json.loads(result.stdout).get("blockdevices", [])
+    except (json.JSONDecodeError, AttributeError) as exc:
+        raise ManagerError("Linux returned an unreadable list of mounted drives.") from exc
+
+    def is_selected_usb(path: str) -> bool:
+        block_name = Path(path).name
+        try:
+            block_sysfs = (Path("/sys/class/block") / block_name / "device").resolve(strict=True)
+            return block_sysfs.is_relative_to(usb_root)
+        except (OSError, ValueError):
+            return False
+
+    def mounted_paths(tree: list[dict]) -> list[tuple[str, str]]:
+        found = []
+        for item in tree:
+            if not isinstance(item, dict):
+                continue
+            path = item.get("path")
+            children = item.get("children") or []
+            if path and is_selected_usb(path):
+                found.extend(mounted_paths(children))
+                points = item.get("mountpoints") or []
+                if isinstance(points, str):
+                    points = [points]
+                for mountpoint in points:
+                    if mountpoint:
+                        found.append((path, str(mountpoint)))
+            else:
+                found.extend(mounted_paths(children))
+        return found
+
+    mounts = mounted_paths(block_devices)
+    if not mounts:
+        return []
+    udisksctl = shutil.which("udisksctl")
+    if not udisksctl:
+        mountpoint = mounts[0][1]
+        raise ManagerError(
+            f"Linux has this drive mounted at {mountpoint}, but udisksctl is missing. "
+            "Safely eject it in Linux Files, then reconnect it to the VM."
+        )
+    released = []
+    for block_path, mountpoint in mounts:
+        try:
+            result = subprocess.run(
+                [udisksctl, "unmount", "--block-device", block_path],
+                check=False, capture_output=True, text=True, timeout=45,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ManagerError(f"Could not safely unmount {mountpoint}: {exc}") from exc
+        if result.returncode:
+            detail = (result.stderr or result.stdout or "The volume is busy.").strip()
+            raise ManagerError(
+                f"Linux could not safely release {mountpoint} ({detail}). Close files using "
+                "the drive, wait for transfers to finish, then connect it again."
+            )
+        released.append(mountpoint)
+    return released
 
 
 def grant_temporary_usb_access(device: dict, path: Path) -> None:
@@ -752,7 +844,16 @@ def _usb_action_locked(name: str, action: str, device_id: str) -> str:
                 raise ManagerError(
                     "That USB device disconnected or changed identity. Reconnect it, scan again, and retry."
                 )
-            grant_temporary_usb_access(device, usb_node)
+            storage_mounts = unmount_usb_storage(device)
+            try:
+                grant_temporary_usb_access(device, usb_node)
+            except ManagerError as exc:
+                if storage_mounts:
+                    raise ManagerError(
+                        f"{exc} The drive volume was safely unmounted from Linux; open it again "
+                        "in Files if you cancel the connection."
+                    ) from exc
+                raise
             host_mounts = unmount_matching_usb_mount(device)
             if device["vendor"] == "05ac":
                 host_state = read_usb_host_state()
@@ -798,7 +899,8 @@ def _usb_action_locked(name: str, action: str, device_id: str) -> str:
                 raise ManagerError(detail) from exc
             attached[device_id] = {**device, "qemu_id": qemu_id}
             write_usb_state(state)
-            suffix = " Mint's matching phone/camera mount was released." if host_mounts else ""
+            released = [*storage_mounts, *host_mounts]
+            suffix = f" Linux released {', '.join(released)}." if released else ""
             return (
                 f"{device['description']} is connected to the VM."
                 f"{suffix} Check macOS System Information → USB to confirm guest detection."
