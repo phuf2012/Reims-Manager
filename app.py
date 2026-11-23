@@ -35,7 +35,7 @@ USB_STATE_FILE = CONFIG_DIR / "usb-devices.json"
 USB_HOST_STATE_FILE = CONFIG_DIR / "usb-host-state.json"
 UPDATE_SETTINGS_FILE = CONFIG_DIR / "update-settings.json"
 REIMS = shutil.which("reims-ctl") or str(HOME / ".cargo" / "bin" / "reims-ctl")
-APP_VERSION = "1.0.2-2"
+APP_VERSION = "1.0.2-3"
 APP_PRERELEASE = True
 GITHUB_RELEASES_URL = "https://api.github.com/repos/phuf2012/Reims-Manager/releases?per_page=20"
 UPDATE_CHECK_INTERVAL = 24 * 60 * 60
@@ -612,6 +612,11 @@ def usb_diagnostics(name: str) -> dict:
             active.append(f"{qemu_id}: not present in QEMU's device tree")
     return {
         "guest_usb": guest_usb.strip() or "QEMU reports no guest USB devices.",
+        "hotplug_bus": next(
+            (bus for bus in ("hostpass.0", "xhci.0", "usb-bus.0")
+             if re.search(rf"(?m)^\s*bus:\s*{re.escape(bus)}\s*$", tree)),
+            None,
+        ),
         "passthrough_devices": "\n".join(dict.fromkeys(active)) or "No USB passthrough devices are recorded.",
     }
 
@@ -694,8 +699,8 @@ def usb_sysfs_node(device: dict) -> Path | None:
     return None
 
 
-def unmount_usb_storage(device: dict) -> list[str]:
-    """Safely unmount mounted partitions on this USB disk before QEMU opens it."""
+def usb_storage_mounts(device: dict) -> list[tuple[str, str]]:
+    """Find mounted volumes belonging to this USB disk without changing host state."""
     usb_root = usb_sysfs_node(device)
     if usb_root is None:
         raise ManagerError("That USB device disconnected or changed identity. Scan and retry.")
@@ -704,7 +709,7 @@ def unmount_usb_storage(device: dict) -> list[str]:
         raise ManagerError("Cannot safely prepare USB storage because lsblk is missing.")
     try:
         result = subprocess.run(
-            [lsblk, "--json", "--paths", "--output", "PATH,TYPE,MOUNTPOINTS"],
+            [lsblk, "--json", "--tree", "--paths", "--output", "PATH,TYPE,MOUNTPOINTS"],
             check=False, capture_output=True, text=True, timeout=15,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -724,15 +729,16 @@ def unmount_usb_storage(device: dict) -> list[str]:
         except (OSError, ValueError):
             return False
 
-    def mounted_paths(tree: list[dict]) -> list[tuple[str, str]]:
+    def mounted_paths(tree: list[dict], on_selected_disk: bool = False) -> list[tuple[str, str]]:
         found = []
         for item in tree:
             if not isinstance(item, dict):
                 continue
             path = item.get("path")
             children = item.get("children") or []
-            if path and is_selected_usb(path):
-                found.extend(mounted_paths(children))
+            selected_disk = on_selected_disk or bool(path and is_selected_usb(path))
+            if selected_disk:
+                found.extend(mounted_paths(children, True))
                 points = item.get("mountpoints") or []
                 if isinstance(points, str):
                     points = [points]
@@ -740,10 +746,15 @@ def unmount_usb_storage(device: dict) -> list[str]:
                     if mountpoint:
                         found.append((path, str(mountpoint)))
             else:
-                found.extend(mounted_paths(children))
+                found.extend(mounted_paths(children, False))
         return found
 
-    mounts = mounted_paths(block_devices)
+    return mounted_paths(block_devices)
+
+
+def unmount_usb_storage(device: dict) -> list[str]:
+    """Safely unmount mounted partitions on this USB disk before QEMU opens it."""
+    mounts = usb_storage_mounts(device)
     if not mounts:
         return []
     udisksctl = shutil.which("udisksctl")
@@ -770,6 +781,18 @@ def unmount_usb_storage(device: dict) -> list[str]:
             )
         released.append(mountpoint)
     return released
+
+
+def usb_hotplug_bus(tree: str) -> str:
+    """Select an existing USB bus, preferring a dedicated passthrough controller."""
+    available = set(re.findall(r"(?m)^\s*bus:\s*([A-Za-z0-9_.-]+)\s*$", tree))
+    for bus in ("hostpass.0", "xhci.0", "usb-bus.0"):
+        if bus in available:
+            return bus
+    raise ManagerError(
+        "This running VM has no USB controller bus available for passthrough. "
+        "Stop it, add a USB controller in Reims, and start it again."
+    )
 
 
 def grant_temporary_usb_access(device: dict, path: Path) -> None:
@@ -839,6 +862,7 @@ def _usb_action_locked(name: str, action: str, device_id: str) -> str:
                 raise ManagerError("That USB device is no longer connected to the host.")
             if device_id in attached:
                 raise ManagerError("That device is already attached to this VM.")
+            hotplug_bus = usb_hotplug_bus(qmp_hmp(qmp, "info qtree"))
             usb_node = usb_node_path(device)
             if not usb_node.exists() or not usb_node_matches(device):
                 raise ManagerError(
@@ -869,7 +893,7 @@ def _usb_action_locked(name: str, action: str, device_id: str) -> str:
             qemu_device = {
                 "driver": "usb-host",
                 "id": qemu_id,
-                "bus": "hostpass.0",
+                "bus": hotplug_bus,
                 "hostbus": device["bus"],
                 "hostaddr": device["address"],
             }
@@ -886,12 +910,17 @@ def _usb_action_locked(name: str, action: str, device_id: str) -> str:
                         " Mint's USB permissions do not allow QEMU to open this device. "
                         "This manager will not change system permissions."
                     )
-                if host_mounts:
+                if storage_mounts:
+                    detail += (
+                        f" Linux safely unmounted {', '.join(storage_mounts)} before this attempt; "
+                        "open the drive in Files to return it to Linux."
+                    )
+                elif host_mounts:
                     detail += " Its matching Mint mount was released; unplug/reconnect it to restore host access."
                 else:
                     detail += (
-                        " If the device node is accessible, close Mint Files and eject/unmount "
-                        "the device there, then reconnect it and retry."
+                        " Close any host app using the device. If it still fails, disconnect it, "
+                        "reconnect it, scan again, and retry."
                     )
                 if device["vendor"] == "05ac":
                     state_for_vm = read_usb_state().get(name, {})
