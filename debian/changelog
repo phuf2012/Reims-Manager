@@ -1,3 +1,12 @@
+reims-manager (1.0.2-2) unstable; urgency=medium
+
+  * Safely unmount mounted USB drive volumes before handing the device to QEMU.
+  * Explain busy-volume and permission errors with clear recovery guidance.
+  * Recover an interrupted temporary usbmuxd stop after confirming QEMU has no
+    manager-owned USB device attached.
+
+ -- phuf2012 <245987108+phuf2012@users.noreply.github.com>  Mon, 23 Nov 2026 11:00:00 -0600
+
 reims-manager (1.0.2-1) unstable; urgency=medium
 
   * Simplify USB passthrough to a clear connect/return flow with periodic scans.
