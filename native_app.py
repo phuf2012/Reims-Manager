@@ -387,7 +387,7 @@ class ReimsManager(Gtk.Application):
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         page.set_border_width(14)
         hint = Gtk.Label(
-            label="Select a device, then choose Connect to VM. Choose Return to Linux when you are done. Safely eject storage first. Linux cannot use a device while it is connected to the VM. Do not pass through the keyboard or mouse you use to control this computer.",
+            label="Select a device, then choose Connect to VM. Choose Return to Linux when you are done. Mounted USB drives are safely unmounted from Linux while connecting. Linux cannot use a device while it is connected to the VM. Do not pass through the keyboard or mouse you use to control this computer.",
             xalign=0,
         )
         hint.set_line_wrap(True)
