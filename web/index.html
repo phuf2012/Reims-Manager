@@ -200,7 +200,7 @@
             <div class="toolbar" style="margin-top:14px">
               <button id="check-updates" class="primary" type="button">Check for Updates</button>
             </div>
-            <p id="update-status" class="hint" aria-live="polite">Installed version: 1.0.1</p>
+            <p id="update-status" class="hint" aria-live="polite">Installed version: 1.0.2-1</p>
             <p><a id="update-link" hidden target="_blank" rel="noopener noreferrer">Download update</a></p>
           </div>
         </section>
@@ -208,16 +208,18 @@
         <section class="tab-content" id="tab-usb">
           <div class="card">
             <h2>USB passthrough</h2>
-            <p class="usb-note">Attach a host USB device to the VM's XHCI bus or detach it to return it to Mint. A device leaving Mint confirms host capture, not that macOS detected it. Avoid passing through the keyboard or mouse you need to control Mint.</p>
-            <p class="usb-note warning">Safely eject USB storage in Mint before attaching it. If your account cannot open a device, Mint may request temporary access to that device only; unplugging removes it. No system rule is written.</p>
+            <p class="usb-note">Select a device and choose <b>Connect to Mac</b>. Choose <b>Return to Linux</b> when you are done. USB storage must be safely ejected in Linux first. Do not pass through the keyboard or mouse you use to control this computer.</p>
+            <p class="usb-note warning">While connected, Linux cannot use the device. Stop the VM or return the device to Linux to release it. If needed, the app asks for temporary access to that device only; it does not write a permanent system rule.</p>
             <div class="table-wrap"><table>
-              <thead><tr><th>Device</th><th>USB ID</th><th>Host address</th><th>State</th><th></th></tr></thead>
-              <tbody id="usb-list"><tr><td colspan="5">Select a running VM to scan devices.</td></tr></tbody>
+              <thead><tr><th>Device</th><th>Status</th><th></th></tr></thead>
+              <tbody id="usb-list"><tr><td colspan="3">Select a running VM to scan devices.</td></tr></tbody>
             </table></div>
-            <div class="toolbar" style="margin-top:14px"><button id="usb-refresh">Scan USB devices</button></div>
-            <div class="toolbar" style="margin-top:14px"><button id="usb-diagnostics-refresh">Check guest USB bus</button></div>
-            <p class="hint">QEMU bus report: this shows devices QEMU attached to the virtual USB controller. In macOS, check Apple menu → About This Mac → System Report → USB. If a drive is listed there but not in Finder, check Disk Utility → View → Show All Devices; do not erase it unless you intend to wipe it.</p>
-            <pre id="usb-diagnostics" style="white-space:pre-wrap;overflow:auto;max-height:260px">Select a running VM and check the guest USB bus.</pre>
+            <div class="toolbar" style="margin-top:14px"><button id="usb-refresh">Scan now</button><span id="usb-scan-status" class="hint" aria-live="polite">Plug in a device, then scan.</span></div>
+            <details style="margin-top:16px"><summary>USB troubleshooting</summary>
+              <p class="hint">If a device connects here but is missing in macOS, check Apple menu → System Settings → General → About → System Report → USB. For drives, also check Disk Utility → View → Show All Devices. Do not erase a disk unless you intend to wipe it.</p>
+              <div class="toolbar" style="margin-top:10px"><button id="usb-diagnostics-refresh">Check guest USB bus</button></div>
+              <pre id="usb-diagnostics">Select a running VM and check its USB bus.</pre>
+            </details>
           </div>
         </section>
 
@@ -236,6 +238,9 @@
     let gpuOptions = [];
     let actionBusy = false;
     let actionLabel = '';
+    let usbBusy = false;
+    let usbPoll = null;
+    let usbScanInProgress = false;
 
     function toast(message, error=false) {
       const el = document.getElementById('toast');
@@ -320,7 +325,7 @@
       } catch (error) { toast(error.message, true); }
     }
     async function action(action) {
-      if (!selected || actionBusy) return;
+      if (!selected || actionBusy || usbBusy) return;
       if (action === 'force-stop' && !confirm('Power off the VM immediately? Unsaved guest work may be lost.')) return;
       actionBusy = true;
       actionLabel = action === 'start' ? 'Starting VM…' : (action === 'stop' ? 'Shutting down VM…' : 'Powering off VM…');
@@ -331,27 +336,64 @@
     }
     async function refreshUsb() {
       const body = document.getElementById('usb-list');
-      if (!selected) { body.innerHTML = '<tr><td colspan="5">Select a VM first.</td></tr>'; return; }
-      body.innerHTML = '<tr><td colspan="5">Scanning…</td></tr>';
+      const status = document.getElementById('usb-scan-status');
+      if (usbScanInProgress) return;
+      if (!selected) { body.innerHTML = '<tr><td colspan="3">Select a VM first.</td></tr>'; return; }
+      const vmName = selected;
+      usbScanInProgress = true;
+      status.textContent = 'Scanning USB devices…';
+      document.getElementById('usb-refresh').disabled = true;
       try {
-        const data = await request('usb?name=' + encodeURIComponent(selected)); body.replaceChildren();
-        if (!data.devices.length) { body.innerHTML = '<tr><td colspan="5">No USB devices found.</td></tr>'; return; }
+        const data = await request('usb?name=' + encodeURIComponent(vmName));
+        if (selected !== vmName) return;
+        body.replaceChildren();
+        if (!data.devices.length) {
+          body.innerHTML = '<tr><td colspan="3">No USB devices found. Plug one in and scan again.</td></tr>';
+          status.textContent = 'Scan complete.';
+          return;
+        }
         for (const device of data.devices) {
           const row = document.createElement('tr');
           const name = document.createElement('td'); name.className='device'; name.textContent=device.description;
-          const ids = document.createElement('td'); ids.textContent=`${device.vendor}:${device.product}`;
-          const port = document.createElement('td'); port.textContent=`${String(device.bus).padStart(3,'0')}:${String(device.address).padStart(3,'0')}`;
-          const state = document.createElement('td'); state.textContent=device.attached ? (device.attached_to_running_vm ? (device.available_on_host ? 'Passed to QEMU' : 'Held by QEMU') : 'Released (VM stopped)') : 'Available to Mint';
+          const state = document.createElement('td');
+          state.textContent=device.attached
+            ? (device.attached_to_running_vm ? (device.available_on_host ? 'Connected to VM' : 'In use by VM') : 'Returned to Linux (VM stopped)')
+            : (device.available_on_host ? 'Available in Linux' : 'In use by another app');
           const cell = document.createElement('td');
-          const button = document.createElement('button'); button.textContent=device.attached ? 'Detach' : 'Attach'; button.disabled=!device.attached && latest.find(v=>v.name===selected)?.state!=='running';
-          button.onclick=async()=>{
-            if (!device.attached && !confirm(`Pass “${device.description}” to macOS? Mint will lose access until it is detached or the VM stops. If needed, Mint will ask to grant temporary access to this one USB device. Safely eject USB storage in Mint first.`)) return;
-            try { const result=await request('usb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:selected,action:device.attached?'detach':'attach',id:device.id})}); toast(result.message); await refreshUsb(); await refreshUsbDiagnostics(); }
-            catch(error){toast(error.message,true);}
+          const button = document.createElement('button');
+          button.className = device.attached ? '' : 'primary';
+          button.textContent = device.attached ? 'Return to Linux' : 'Connect to Mac';
+          button.disabled = usbBusy || actionBusy || (!device.attached && (!device.available_on_host || latest.find(v=>v.name===vmName)?.state!=='running'));
+          button.onclick = async () => {
+            if (usbBusy) return;
+            usbBusy = true;
+            for (const actionButton of body.querySelectorAll('button')) actionButton.disabled = true;
+            button.textContent = device.attached ? 'Returning…' : 'Connecting…';
+            status.textContent = device.attached ? 'Returning device to Linux…' : 'Connecting device to the VM…';
+            try {
+              const result = await request('usb', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:vmName,action:device.attached?'detach':'attach',id:device.id})});
+              toast(result.message);
+            } catch (error) { toast(error.message, true); }
+            finally {
+              usbBusy = false;
+              if (selected === vmName) {
+                await refreshUsb();
+                if (document.querySelector('#usb-diagnostics').closest('details').open) await refreshUsbDiagnostics();
+              }
+            }
           };
-          cell.append(button); row.append(name,ids,port,state,cell); body.append(row);
+          cell.append(button); row.append(name, state, cell); body.append(row);
         }
-      } catch(error) { body.innerHTML=''; const row=document.createElement('tr'); const cell=document.createElement('td'); cell.colSpan=5; cell.textContent=error.message; row.append(cell); body.append(row); }
+        status.textContent = `Scan complete · ${data.devices.length} device${data.devices.length === 1 ? '' : 's'} found.`;
+      } catch (error) {
+        if (selected === vmName) {
+          body.replaceChildren(); const row = document.createElement('tr'); const cell = document.createElement('td');
+          cell.colSpan = 3; cell.textContent = error.message; row.append(cell); body.append(row); status.textContent = 'Scan failed.';
+        }
+      } finally {
+        usbScanInProgress = false;
+        document.getElementById('usb-refresh').disabled = false;
+      }
     }
     async function refreshLogs() {
       if (!selected) return;
@@ -438,7 +480,7 @@
       document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b===button));
       document.querySelectorAll('.tab-content').forEach(section=>section.classList.toggle('active',section.id===`tab-${button.dataset.tab}`));
       if(button.dataset.tab==='share') refreshSharedFolder();
-      if(button.dataset.tab==='usb') { refreshUsb(); refreshUsbDiagnostics(); } if(button.dataset.tab==='logs') refreshLogs();
+      if(button.dataset.tab==='usb') { refreshUsb(); clearInterval(usbPoll); usbPoll=setInterval(()=>{ if(!usbBusy) refreshUsb(); },5000); } else if(usbPoll){clearInterval(usbPoll);usbPoll=null;} if(button.dataset.tab==='logs') refreshLogs();
     }));
     document.getElementById('start-btn').onclick=()=>action('start');
     document.getElementById('stop-btn').onclick=()=>action('stop');
