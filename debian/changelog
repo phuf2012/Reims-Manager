@@ -1,3 +1,12 @@
+reims-manager (1.0.2-3) unstable; urgency=medium
+
+  * Detect the VM's actual USB controller and use its bus for hotplug.
+  * Find mounted partitions through their parent USB disk before unmounting.
+  * Request a tree-form disk list so Linux reports each partition under its disk.
+  * Show the available guest passthrough controller in USB diagnostics.
+
+ -- phuf2012 <245987108+phuf2012@users.noreply.github.com>  Mon, 23 Nov 2026 12:00:00 -0600
+
 reims-manager (1.0.2-2) unstable; urgency=medium
 
   * Safely unmount mounted USB drive volumes before handing the device to QEMU.
