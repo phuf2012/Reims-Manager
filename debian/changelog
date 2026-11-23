@@ -1,3 +1,13 @@
+reims-manager (1.0.2-1) unstable; urgency=medium
+
+  * Simplify USB passthrough to a clear connect/return flow with periodic scans.
+  * Serialize USB hotplug and detach operations to prevent duplicate QMP actions.
+  * Recheck USB identity before attach and handle reused bus/address pairs safely.
+  * Write USB state atomically with private permissions and unique temporary files.
+  * Improve USB progress, status, and troubleshooting in both interfaces.
+
+ -- phuf2012 <245987108+phuf2012@users.noreply.github.com>  Mon, 23 Nov 2026 10:00:00 -0600
+
 reims-manager (1.0.1-4) unstable; urgency=medium
 
   * Release the 1.0.1 settings, shared-folder, and update features as stable.
