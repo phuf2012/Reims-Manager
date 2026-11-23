@@ -723,7 +723,7 @@ class ReimsManager(Gtk.Application):
             self.background(lambda: backend.usb_diagnostics(name), self.diagnostics_done)
 
     def diagnostics_done(self, result, error):
-        value = error or f"Guest USB:\n{result['guest_usb']}\n\nQEMU devices:\n{result['passthrough_devices']}"
+        value = error or f"Passthrough controller: {result.get('hotplug_bus') or 'not found'}\n\nGuest USB:\n{result['guest_usb']}\n\nQEMU devices:\n{result['passthrough_devices']}"
         self.set_text(self.diagnostics, value)
         return False
 
