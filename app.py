@@ -35,17 +35,19 @@ USB_STATE_FILE = CONFIG_DIR / "usb-devices.json"
 USB_HOST_STATE_FILE = CONFIG_DIR / "usb-host-state.json"
 UPDATE_SETTINGS_FILE = CONFIG_DIR / "update-settings.json"
 REIMS = shutil.which("reims-ctl") or str(HOME / ".cargo" / "bin" / "reims-ctl")
-APP_VERSION = "1.0.1"
-APP_PRERELEASE = False
+APP_VERSION = "1.0.2-1"
+APP_PRERELEASE = True
 GITHUB_RELEASES_URL = "https://api.github.com/repos/phuf2012/Reims-Manager/releases?per_page=20"
 UPDATE_CHECK_INTERVAL = 24 * 60 * 60
 NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
+USB_DEVICE_ID_RE = re.compile(r"usb-\d{3}-\d{3}")
 LSUSB_RE = re.compile(
     r"^Bus\s+(\d+)\s+Device\s+(\d+):\s+ID\s+([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\s*(.*)$"
 )
 SHARE_NET_ID = "reims_manager_share_net"
 SHARE_DEVICE_ID = "reims_manager_share_nic"
 SHARE_URL = "smb://10.0.3.4/qemu"
+USB_ACTION_LOCK = threading.Lock()
 
 
 class ManagerError(Exception):
@@ -354,10 +356,14 @@ def read_usb_state() -> dict[str, dict]:
 
 
 def write_usb_state(data: dict[str, dict]) -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    temporary = USB_STATE_FILE.with_suffix(".tmp")
-    temporary.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    os.replace(temporary, USB_STATE_FILE)
+    CONFIG_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = USB_STATE_FILE.with_name(f".usb-devices-{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, USB_STATE_FILE)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def read_usb_host_state() -> dict:
@@ -369,10 +375,14 @@ def read_usb_host_state() -> dict:
 
 
 def write_usb_host_state(data: dict) -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    temporary = USB_HOST_STATE_FILE.with_suffix(".tmp")
-    temporary.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    os.replace(temporary, USB_HOST_STATE_FILE)
+    CONFIG_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = USB_HOST_STATE_FILE.with_name(f".usb-host-state-{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, USB_HOST_STATE_FILE)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def set_usbmuxd(action: str) -> None:
@@ -470,7 +480,11 @@ def list_usb_devices(name: str) -> list[dict]:
             continue
         bus, address, vendor, product, description = match.groups()
         device_id = f"usb-{int(bus):03d}-{int(address):03d}"
-        attached = state.get(device_id)
+        saved = state.get(device_id)
+        attached = saved and (
+            saved.get("vendor", "").lower() == vendor.lower()
+            and saved.get("product", "").lower() == product.lower()
+        )
         devices_by_id[device_id] = {
             "id": device_id,
             "bus": int(bus),
@@ -484,16 +498,24 @@ def list_usb_devices(name: str) -> list[dict]:
     # Keep a remembered attached row visible even if host enumeration changes while
     # QEMU owns the device. Detach uses QEMU's saved id, not the transient host address.
     for device_id, saved in state.items():
-        if device_id not in devices_by_id:
-            devices_by_id[device_id] = {
+        present = devices_by_id.get(device_id)
+        same_device = present and present["vendor"] == saved.get("vendor") and present["product"] == saved.get("product")
+        if not same_device:
+            # Bus/address pairs are reused by Linux. Keep the old VM-owned device
+            # separately so Detach can never accidentally target a newly plugged-in
+            # device that inherited the same address.
+            row_id = f"attached-{saved['qemu_id']}" if present and saved.get("qemu_id") else device_id
+            if present:
+                present["available_on_host"] = False
+            devices_by_id[row_id] = {
                 **saved,
-                "id": device_id,
+                "id": row_id,
                 "attached": True,
                 "attached_to_running_vm": vm["state"] == "running",
                 "available_on_host": False,
             }
         else:
-            devices_by_id[device_id]["available_on_host"] = True
+            present["available_on_host"] = True
     for device in devices_by_id.values():
         device.setdefault("available_on_host", True)
     return list(devices_by_id.values())
@@ -640,6 +662,24 @@ def usb_node_path(device: dict) -> Path:
     return Path("/dev/bus/usb") / f"{int(device['bus']):03d}" / f"{int(device['address']):03d}"
 
 
+def usb_node_matches(device: dict) -> bool:
+    """Confirm the transient USB address still belongs to the selected device."""
+    for node in Path("/sys/bus/usb/devices").glob("*"):
+        try:
+            bus = int((node / "busnum").read_text().strip())
+            address = int((node / "devnum").read_text().strip())
+            vendor = (node / "idVendor").read_text().strip().lower()
+            product = (node / "idProduct").read_text().strip().lower()
+        except (OSError, ValueError):
+            continue
+        if (bus, address, vendor, product) == (
+            int(device["bus"]), int(device["address"]),
+            str(device["vendor"]).lower(), str(device["product"]).lower(),
+        ):
+            return True
+    return False
+
+
 def grant_temporary_usb_access(device: dict, path: Path) -> None:
     """Use the desktop authorization prompt to grant this user access to one USB node."""
     if os.access(path, os.R_OK | os.W_OK):
@@ -677,8 +717,22 @@ def grant_temporary_usb_access(device: dict, path: Path) -> None:
 
 
 def usb_action(name: str, action: str, device_id: str) -> str:
+    # QMP hotplug and the on-disk attachment record must be updated as one
+    # operation. Serializing clicks avoids two requests attaching the same node.
+    if not USB_ACTION_LOCK.acquire(blocking=False):
+        raise ManagerError("A USB action is already in progress. Wait for it to finish, then try again.")
+    try:
+        return _usb_action_locked(name, action, device_id)
+    finally:
+        USB_ACTION_LOCK.release()
+
+
+def _usb_action_locked(name: str, action: str, device_id: str) -> str:
     name = valid_name(name)
-    if not re.fullmatch(r"usb-\d{3}-\d{3}", device_id):
+    if not isinstance(device_id, str) or not (
+        USB_DEVICE_ID_RE.fullmatch(device_id)
+        or re.fullmatch(r"attached-reims_usb_[a-f0-9]{12}", device_id)
+    ):
         raise ManagerError("Invalid USB device selection.")
     vm = get_vm(name)
     if vm["state"] != "running":
@@ -694,10 +748,9 @@ def usb_action(name: str, action: str, device_id: str) -> str:
             if device_id in attached:
                 raise ManagerError("That device is already attached to this VM.")
             usb_node = usb_node_path(device)
-            if not usb_node.exists():
+            if not usb_node.exists() or not usb_node_matches(device):
                 raise ManagerError(
-                    f"The USB device disappeared from {usb_node}. Unplug it, reconnect it, "
-                    "scan again, and retry."
+                    "That USB device disconnected or changed identity. Reconnect it, scan again, and retry."
                 )
             grant_temporary_usb_access(device, usb_node)
             host_mounts = unmount_matching_usb_mount(device)
@@ -707,6 +760,10 @@ def usb_action(name: str, action: str, device_id: str) -> str:
                     set_usbmuxd("stop")
                     host_state[name] = True
                     write_usb_host_state(host_state)
+            if not usb_node.exists() or not usb_node_matches(device):
+                if device["vendor"] == "05ac":
+                    restore_usbmuxd_if_needed(name, read_usb_state().get(name, {}))
+                raise ManagerError("The USB device changed while connecting. Reconnect it and scan again.")
             qemu_id = f"reims_usb_{uuid.uuid4().hex[:12]}"
             qemu_device = {
                 "driver": "usb-host",
@@ -743,11 +800,15 @@ def usb_action(name: str, action: str, device_id: str) -> str:
             write_usb_state(state)
             suffix = " Mint's matching phone/camera mount was released." if host_mounts else ""
             return (
-                f"QEMU accepted {device['description']} on the VM's physical-device USB bus."
-                f"{suffix} This confirms QEMU hotplug, not macOS detection; use Check guest USB below."
+                f"{device['description']} is connected to the VM."
+                f"{suffix} Check macOS System Information → USB to confirm guest detection."
             )
         if action == "detach":
-            saved = attached.get(device_id)
+            state_key = device_id if device_id in attached else next(
+                (key for key, value in attached.items() if f"attached-{value.get('qemu_id')}" == device_id),
+                None,
+            )
+            saved = attached.get(state_key) if state_key else None
             if saved is None:
                 raise ManagerError("That device is not recorded as attached to this VM.")
             qmp.call("device_del", {"id": saved["qemu_id"]})
@@ -761,10 +822,10 @@ def usb_action(name: str, action: str, device_id: str) -> str:
                     "QEMU has not finished removing this USB device yet. It remains marked "
                     "as attached; wait a few seconds and press Detach again."
                 )
-            del attached[device_id]
+            del attached[state_key]
             write_usb_state(state)
             restore_usbmuxd_if_needed(name, attached)
-            return "Detached the USB device; Mint can use or mount it again now."
+            return "Device returned to Linux. You can use or mount it in Mint again."
     raise ManagerError("Unknown USB action.")
 
 
