@@ -35,9 +35,9 @@ USB_STATE_FILE = CONFIG_DIR / "usb-devices.json"
 USB_HOST_STATE_FILE = CONFIG_DIR / "usb-host-state.json"
 UPDATE_SETTINGS_FILE = CONFIG_DIR / "update-settings.json"
 REIMS = shutil.which("reims-ctl") or str(HOME / ".cargo" / "bin" / "reims-ctl")
-APP_VERSION = "1.0.2-3"
+APP_VERSION = "1.0.2-4"
 APP_PRERELEASE = True
-GITHUB_RELEASES_URL = "https://api.github.com/repos/phuf2012/Reims-Manager/releases?per_page=20"
+GITHUB_RELEASES_URL = "https://api.github.com/repos/phuf2012/Reims-Manager/releases?per_page=100"
 UPDATE_CHECK_INTERVAL = 24 * 60 * 60
 NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
 USB_DEVICE_ID_RE = re.compile(r"usb-\d{3}-\d{3}")
@@ -127,6 +127,10 @@ def check_for_updates() -> dict:
     candidates = []
     for release in releases:
         if not isinstance(release, dict) or release.get("draft"):
+            continue
+        # Stable installations should never be offered an explicitly marked
+        # prerelease. Prerelease builds can follow prerelease or stable releases.
+        if not APP_PRERELEASE and release.get("prerelease") is True:
             continue
         key = version_key(str(release.get("tag_name", "")), prerelease=release.get("prerelease") is True)
         if key is not None:
@@ -528,6 +532,23 @@ def list_usb_devices(name: str) -> list[dict]:
             present["available_on_host"] = True
     for device in devices_by_id.values():
         device.setdefault("available_on_host", True)
+        description = device.get("description", "")
+        if device.get("vendor") == "05ac" and re.search(
+            r"iphone|ipad|mobile device|\bdfu\b|recovery mode", description, re.IGNORECASE
+        ):
+            device["device_type"] = "Apple iPhone/iPad"
+            device["connection_hint"] = (
+                "Unlock the iPhone or iPad before connecting. If macOS asks, tap Trust and "
+                "enter the passcode; keep it unlocked while it first appears."
+            )
+        elif device.get("vendor") == "05ac":
+            device["device_type"] = "Apple USB device"
+            device["connection_hint"] = (
+                "If this is an iPhone or iPad, unlock it before connecting and tap Trust in macOS if prompted."
+            )
+        else:
+            device["device_type"] = "USB device"
+            device["connection_hint"] = ""
     return list(devices_by_id.values())
 
 
@@ -993,10 +1014,14 @@ def apply_settings(name: str, payload: dict) -> str:
         raise ManagerError("Video acceleration must be enabled or disabled.")
     network = bool(payload.get("network", True))
     logs = bool(payload.get("logs", False))
+    graphics = payload.get("graphics", "reims-vgpu")
+    if graphics not in ("reims-vgpu", "vmware-svga"):
+        raise ManagerError("Choose Reims vGPU or QEMU VMware SVGA graphics.")
     args = [
         "set", name,
         "--cpus", str(cpus),
         "--memory", f"{memory}G",
+        "--graphics", graphics,
         "--resolution", resolution,
         "--borderless", "true" if borderless else "false",
         "--hidpi", "true" if hidpi else "false",
