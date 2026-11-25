@@ -73,6 +73,7 @@
     th, td { text-align: left; padding: 11px 9px; border-bottom: 1px solid var(--stroke); vertical-align: middle; }
     th { color: var(--muted); font-size: 12px; font-weight: 550; }
     td.device { min-width: 220px; }
+    .usb-device-hint { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
     .usb-note { margin: 0 0 13px; color: var(--muted); }
     pre { min-height: 120px; max-height: 420px; overflow: auto; background: #0c1016; border: 1px solid var(--stroke); border-radius: 9px; padding: 13px; color: #c7d5e8; white-space: pre-wrap; overflow-wrap: anywhere; }
     .empty { border: 1px dashed #475365; border-radius: 14px; padding: 36px; color: var(--muted); text-align: center; }
@@ -161,6 +162,9 @@
                 <label>Vulkan GPU
                   <select name="gpu" id="gpu-select"></select>
                 </label>
+                <label>Graphics backend
+                  <select name="graphics"><option value="reims-vgpu">Reims vGPU (accelerated)</option><option value="vmware-svga">VMware SVGA (compatibility, no acceleration)</option></select>
+                </label>
                 <label class="check"><input type="checkbox" name="video_acceleration" checked> Host video acceleration</label>
                 <label class="check"><input type="checkbox" name="borderless" checked> Borderless fullscreen</label>
                 <label class="check"><input type="checkbox" name="hidpi"> HiDPI (higher render load)</label>
@@ -168,7 +172,7 @@
                 <label class="check"><input type="checkbox" name="network" checked> VM network</label>
                 <label class="check"><input type="checkbox" name="logs"> Keep QEMU logs</label>
               </div>
-              <p class="hint">Stop the VM before saving settings. Fullscreen settings apply on its next start.</p>
+              <p class="hint">Reims vGPU is recommended for accelerated graphics. VMware SVGA is a compatibility fallback without acceleration. Stop the VM before saving settings.</p>
               <button class="primary" type="submit">Save settings</button>
             </form>
           </div>
@@ -195,12 +199,12 @@
         <section class="tab-content" id="tab-updates">
           <div class="card">
             <h2>Reims Manager updates</h2>
-            <p class="usb-note">Check GitHub for a newer Reims Manager release. Enabling automatic checks checks now and on app launch, at most once per day. Updates are never downloaded or installed without your action.</p>
+            <p class="usb-note">Check GitHub over HTTPS for a newer Reims Manager release. Update downloads come from the official GitHub release page and are never installed without your action. Linux Mint Update Manager needs a signed APT repository; this release does not configure one.</p>
             <label class="check"><input id="auto-update-check" type="checkbox"> Automatically check for updates</label>
             <div class="toolbar" style="margin-top:14px">
               <button id="check-updates" class="primary" type="button">Check for Updates</button>
             </div>
-            <p id="update-status" class="hint" aria-live="polite">Installed version: 1.0.2-3</p>
+            <p id="update-status" class="hint" aria-live="polite">Installed version: 1.0.2-4</p>
             <p><a id="update-link" hidden target="_blank" rel="noopener noreferrer">Download update</a></p>
           </div>
         </section>
@@ -208,7 +212,7 @@
         <section class="tab-content" id="tab-usb">
           <div class="card">
             <h2>USB passthrough</h2>
-            <p class="usb-note">Select a device and choose <b>Connect to VM</b>. Choose <b>Return to Linux</b> when you are done. Mounted USB drives are safely unmounted from Linux as part of connecting. Do not pass through the keyboard or mouse you use to control this computer.</p>
+              <p class="usb-note">Select a device and choose <b>Connect to VM</b>. Choose <b>Return to Linux</b> when you are done. Mounted USB drives are safely unmounted from Linux as part of connecting. Do not pass through the keyboard or mouse you use to control this computer. For iPhone/iPad, unlock it before connecting; tap <b>Trust</b> and enter its passcode if macOS asks.</p>
             <p class="usb-note warning">While connected, Linux cannot use the device. Stop the VM or return the device to Linux to release it. If needed, the app asks for temporary access to that device only; it does not write a permanent system rule.</p>
             <div class="table-wrap"><table>
               <thead><tr><th>Device</th><th>Status</th><th></th></tr></thead>
@@ -277,6 +281,7 @@
       form.elements.borderless.checked = display.includes('borderless') || resolution === 'host';
       form.elements.hidpi.checked = display.includes('HiDPI');
       form.elements.video_acceleration.checked = detail(vm, 'video', 'on').toLowerCase().startsWith('on');
+      form.elements.graphics.value = detail(vm, 'graphics', 'reims-vgpu').toLowerCase().includes('vmware-svga') ? 'vmware-svga' : 'reims-vgpu';
       form.elements.audio.checked = detail(vm, 'audio', 'on').startsWith('on');
       form.elements.network.checked = !detail(vm, 'network', 'user').startsWith('off');
       form.elements.logs.checked = !detail(vm, 'logs', 'off').startsWith('off');
@@ -355,6 +360,13 @@
         for (const device of data.devices) {
           const row = document.createElement('tr');
           const name = document.createElement('td'); name.className='device'; name.textContent=device.description;
+          if (device.vendor === '05ac') {
+            name.textContent = `${device.device_type || 'Apple USB device'}: ${device.description}`;
+            if (device.connection_hint) {
+              const tip = document.createElement('small'); tip.className='usb-device-hint'; tip.textContent=device.connection_hint;
+              name.append(document.createElement('br'), tip);
+            }
+          }
           const state = document.createElement('td');
           state.textContent=device.attached
             ? (device.attached_to_running_vm ? (device.available_on_host ? 'Connected to VM' : 'In use by VM') : 'Returned to Linux (VM stopped)')
@@ -519,7 +531,7 @@
       const saveButton=form.querySelector('button[type="submit"]');
       saveButton.disabled=true;
       saveButton.textContent='Saving…';
-      const payload={name:selected,cpus:form.elements.cpus.value,memory:form.elements.memory.value,resolution:form.elements.resolution.value,refresh:form.elements.refresh.value,gpu:form.elements.gpu.value,borderless:form.elements.borderless.checked,hidpi:form.elements.hidpi.checked,video_acceleration:form.elements.video_acceleration.checked,audio:form.elements.audio.checked,network:form.elements.network.checked,logs:form.elements.logs.checked};
+      const payload={name:selected,cpus:form.elements.cpus.value,memory:form.elements.memory.value,resolution:form.elements.resolution.value,refresh:form.elements.refresh.value,gpu:form.elements.gpu.value,graphics:form.elements.graphics.value,borderless:form.elements.borderless.checked,hidpi:form.elements.hidpi.checked,video_acceleration:form.elements.video_acceleration.checked,audio:form.elements.audio.checked,network:form.elements.network.checked,logs:form.elements.logs.checked};
       try{const result=await request('vm/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});toast(result.message||'Settings saved.');await refreshState();}
       catch(error){toast(error.message,true);}
       finally{saveButton.textContent='Save settings';saveButton.disabled=latest.find(v=>v.name===selected)?.state==='running';}
