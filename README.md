@@ -1,6 +1,16 @@
 # Reims Manager
 
-Reims Manager is a native GTK desktop app for managing virtual machines created by [Reims vGPU](https://github.com/steelbrain/reims-vgpu). It currently targets Linux desktop systems such as Ubuntu and other Linux distros (Ones that support .deb).
+Reims Manager is a native GTK desktop app for managing virtual machines created by [Reims vGPU](https://github.com/steelbrain/reims-vgpu). It currently targets Linux desktop systems such as Ubuntu and other Linux distros (ones that support `.deb`).
+
+## Reims Manager 1.0.2-5 — Pre-Release
+
+- Give the native GTK app a consistent Reims Manager dark theme instead of inheriting most colors from the desktop theme.
+- Count up to four physical USB devices per VM; the VM's virtual keyboard and mouse are not counted.
+- For Apple devices, match QEMU passthrough by physical USB port and vendor when available, so a phone that re-enumerates at a new USB address can remain associated with its port.
+- Detect and disable the duplicate Apple-device row when the phone reappears on the same port, with a clear “Already connected” status.
+- Show USB slot use in both interfaces and reject a fifth device before unmounting or releasing anything from Linux.
+- Add package-format-aware update asset selection for `.deb`, `.rpm`, and `.AppImage` release assets; this build remains a `.deb` and does not install updates automatically.
+- Record Apple Watch and distro update-manager support as explicit groundwork only. Watch pairing and signed distro repositories are not implemented in this release.
 
 ## Reims Manager 1.0.2-4 — Pre-Release
 
@@ -18,7 +28,7 @@ This pre-release focuses on USB passthrough, Apple mobile devices, and clearer g
 - Correctly recognizes mounted partitions belonging to a USB disk before attempting the safe unmount.
 - Gives connected iPhone/iPad devices specific unlock, Trust, and passcode guidance in the USB list.
 - Adds an explicit graphics backend setting: Reims vGPU for accelerated graphics, or QEMU VMware SVGA as a compatibility fallback without acceleration.
-- Stable builds no longer offer prereleases as updates. Update checks use the official GitHub Releases API over HTTPS and link directly to the HTTPS `.deb` asset.
+- Stable builds no longer offer prereleases as updates. Update checks use the official GitHub Releases API over HTTPS and link directly to the matching package-format asset.
 
 The guest operating system still needs its own drivers to recognize a passed-through device. Linux gives up access while the VM owns it. USB volumes that Linux currently has mounted are unmounted before passthrough; open files or transfers can make Linux refuse the unmount, in which case the app explains what to close. The manager does not install system rules or persist device permissions.
 
@@ -38,12 +48,12 @@ Settings apply on the VM's next start, and **Start** preserves them instead of s
 
 The **Shared folder** section can expose one Linux folder to macOS with QEMU's private SMB network. The guest can read and write the selected folder while the VM runs. It requires Samba's `smbd` on the host (`sudo apt install samba`); Reims Manager does not install or enable Samba. Without `smbd`, the app shows that requirement and will not save an unusable share. In macOS Finder, use **Go → Connect to Server** and enter `smb://10.0.3.4/qemu`. The share uses a private VM network and is not available from your local network.
 
-The **Updates** section has a **Check for Updates** action and an opt-in automatic check setting. Enabling it checks immediately, then at app launch no more than once per day. It links to the newer release `.deb`; Reims Manager never downloads or installs an update without your action. Update checks contact the public GitHub Releases API for `phuf2012/Reims-Manager` over HTTPS. Linux Mint Update Manager needs a signed APT repository; this GitHub-release workflow does not configure one yet.
+The **Updates** section has a **Check for Updates** action and an opt-in automatic check setting. Enabling it checks immediately, then at app launch no more than once per day. It links to the newer matching package asset; Reims Manager never installs an update without your action. Update checks contact the public GitHub Releases API for `phuf2012/Reims-Manager` over HTTPS. Appearing in Linux distribution update managers requires signed package repositories for each supported package ecosystem; this GitHub-release workflow does not configure them.
 
 ### Beta and future ideas
 
 - **Apple Watch passthrough is not supported in this release.** Apple Watch setup and pairing are handled through a paired iPhone, so exposing a USB device alone would not make watchOS pairing work. This remains a research item, not a working beta feature.
-- A signed APT repository for Linux Mint Update Manager is also a future item. Until that is available, updates are checked and downloaded through GitHub Releases.
+- Integration with distro update managers is a future item. Each package ecosystem needs its own signed repository and release metadata. Until those exist, this app only checks GitHub Releases and links to the matching published package asset.
 
 ## Scope
 
