@@ -4,7 +4,7 @@ Reims Manager is a native GTK desktop app for managing virtual machines created 
 
 ## Reims Manager 1.0.2-5 — Pre-Release
 
-- Give the native GTK app a consistent Reims Manager dark theme instead of inheriting most colors from the desktop theme.
+- Fix GTK text/background contrast with explicit dark Reims Manager colors across desktop themes.
 - Count up to four physical USB devices per VM; the VM's virtual keyboard and mouse are not counted.
 - For Apple devices, match QEMU passthrough by physical USB port and vendor when available, so a phone that re-enumerates at a new USB address can remain associated with its port.
 - Detect and disable the duplicate Apple-device row when the phone reappears on the same port, with a clear “Already connected” status.
