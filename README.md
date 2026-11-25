@@ -2,9 +2,9 @@
 
 Reims Manager is a native GTK desktop app for managing virtual machines created by [Reims vGPU](https://github.com/steelbrain/reims-vgpu). It currently targets Linux desktop systems such as Linux Mint and Ubuntu.
 
-## Reims Manager 1.0.2-3 — Pre-Release
+## Reims Manager 1.0.2-4 — Pre-Release
 
-This pre-release focuses on USB passthrough reliability and a simpler connect/return workflow.
+This pre-release focuses on USB passthrough, Apple mobile devices, and clearer graphics choices.
 
 - Connect a device to the running VM or return it to Linux with one clearly labeled action.
 - USB devices are rescanned every five seconds while the USB page is open.
@@ -16,6 +16,9 @@ This pre-release focuses on USB passthrough reliability and a simpler connect/re
 - Restores Mint's Apple USB service after an interrupted iPhone attach when QEMU no longer has a manager-owned USB device attached.
 - Detects the VM's active USB controller and hotplugs to that bus; it no longer assumes every VM has a dedicated `hostpass.0` controller.
 - Correctly recognizes mounted partitions belonging to a USB disk before attempting the safe unmount.
+- Gives connected iPhone/iPad devices specific unlock, Trust, and passcode guidance in the USB list.
+- Adds an explicit graphics backend setting: Reims vGPU for accelerated graphics, or QEMU VMware SVGA as a compatibility fallback without acceleration.
+- Stable builds no longer offer prereleases as updates. Update checks use the official GitHub Releases API over HTTPS and link directly to the HTTPS `.deb` asset.
 
 The guest operating system still needs its own drivers to recognize a passed-through device. Linux gives up access while the VM owns it. USB volumes that Linux currently has mounted are unmounted before passthrough; open files or transfers can make Linux refuse the unmount, in which case the app explains what to close. The manager does not install system rules or persist device permissions.
 
@@ -35,7 +38,12 @@ Settings apply on the VM's next start, and **Start** preserves them instead of s
 
 The **Shared folder** section can expose one Linux folder to macOS with QEMU's private SMB network. The guest can read and write the selected folder while the VM runs. It requires Samba's `smbd` on the host (`sudo apt install samba`); Reims Manager does not install or enable Samba. Without `smbd`, the app shows that requirement and will not save an unusable share. In macOS Finder, use **Go → Connect to Server** and enter `smb://10.0.3.4/qemu`. The share uses a private VM network and is not available from your local network.
 
-The **Updates** section has a **Check for Updates** action and an opt-in automatic check setting. Enabling it checks immediately, then at app launch no more than once per day. It links to the newer release `.deb`; Reims Manager never downloads or installs an update without your action. Update checks contact the public GitHub Releases API for `phuf2012/Reims-Manager`.
+The **Updates** section has a **Check for Updates** action and an opt-in automatic check setting. Enabling it checks immediately, then at app launch no more than once per day. It links to the newer release `.deb`; Reims Manager never downloads or installs an update without your action. Update checks contact the public GitHub Releases API for `phuf2012/Reims-Manager` over HTTPS. Linux Mint Update Manager needs a signed APT repository; this GitHub-release workflow does not configure one yet.
+
+### Beta and future ideas
+
+- **Apple Watch passthrough is not supported in this release.** Apple Watch setup and pairing are handled through a paired iPhone, so exposing a USB device alone would not make watchOS pairing work. This remains a research item, not a working beta feature.
+- A signed APT repository for Linux Mint Update Manager is also a future item. Until that is available, updates are checked and downloaded through GitHub Releases.
 
 ## Scope
 
@@ -54,7 +62,7 @@ The Debian package declares GTK 3, Python GTK bindings, `usbutils`, `acl`, `udis
 
 Attaching a physical USB device gives it to the VM; Linux may lose access until you detach it or stop the VM. Safely eject storage in Linux first and close host apps that use the phone. Do not attach the keyboard or mouse needed to control the host. Temporary permission to a selected USB device may trigger a system authorization prompt; the app does not create a persistent USB permission rule.
 
-For iPhone passthrough, the app may temporarily stop Mint's `usbmuxd.service` if it is active, then restore it after the Apple USB device is detached or the VM stops. No persistent host service setting is changed. USB behavior inside the guest depends on the guest OS and its drivers.
+For iPhone/iPad passthrough, unlock the device and approve **Trust** in the guest if prompted. The app may temporarily stop Mint's `usbmuxd.service` if it is active, then restore it after the Apple USB device is detached or the VM stops. No persistent host service setting is changed. USB behavior inside the guest depends on the guest OS and its drivers.
 
 ## Development
 
