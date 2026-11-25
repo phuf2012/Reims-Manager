@@ -35,10 +35,12 @@ USB_STATE_FILE = CONFIG_DIR / "usb-devices.json"
 USB_HOST_STATE_FILE = CONFIG_DIR / "usb-host-state.json"
 UPDATE_SETTINGS_FILE = CONFIG_DIR / "update-settings.json"
 REIMS = shutil.which("reims-ctl") or str(HOME / ".cargo" / "bin" / "reims-ctl")
-APP_VERSION = "1.0.2-4"
+APP_VERSION = "1.0.2-5"
 APP_PRERELEASE = True
+APP_PACKAGE_FORMAT = "deb"
 GITHUB_RELEASES_URL = "https://api.github.com/repos/phuf2012/Reims-Manager/releases?per_page=100"
 UPDATE_CHECK_INTERVAL = 24 * 60 * 60
+USB_PASSTHROUGH_LIMIT = 4
 NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
 USB_DEVICE_ID_RE = re.compile(r"usb-\d{3}-\d{3}")
 LSUSB_RE = re.compile(
@@ -141,11 +143,13 @@ def check_for_updates() -> dict:
     assets = latest.get("assets", [])
     if not isinstance(assets, list):
         assets = []
-    deb_asset = next(
-        (asset for asset in assets if isinstance(asset, dict) and str(asset.get("name", "")).lower().endswith(".deb")),
+    asset_suffix = {"deb": ".deb", "rpm": ".rpm", "appimage": ".appimage"}.get(APP_PACKAGE_FORMAT)
+    package_asset = next(
+        (asset for asset in assets if asset_suffix and isinstance(asset, dict)
+         and str(asset.get("name", "")).lower().endswith(asset_suffix)),
         None,
     )
-    download_url = deb_asset.get("browser_download_url") if deb_asset else None
+    download_url = package_asset.get("browser_download_url") if package_asset else None
     release_url = latest.get("html_url")
     if not isinstance(release_url, str) or not release_url.startswith("https://github.com/phuf2012/Reims-Manager/releases/"):
         release_url = "https://github.com/phuf2012/Reims-Manager/releases"
@@ -159,6 +163,8 @@ def check_for_updates() -> dict:
         "current_version": APP_VERSION,
         "latest_version": str(latest.get("tag_name", "Unknown")),
         "release_name": str(latest.get("name") or latest.get("tag_name") or "Reims Manager update"),
+        "package_format": APP_PACKAGE_FORMAT,
+        "package_name": package_asset.get("name") if package_asset else None,
         "update_available": latest_key > (current_key or ((), 0, 0)),
         "release_url": release_url,
         "download_url": download_url,
@@ -506,6 +512,10 @@ def list_usb_devices(name: str) -> list[dict]:
             "vendor": vendor.lower(),
             "product": product.lower(),
             "description": description.strip() or "USB device",
+            "host_port": usb_host_port({
+                "bus": int(bus), "address": int(address),
+                "vendor": vendor.lower(), "product": product.lower(),
+            }),
             "attached": bool(attached),
             "attached_to_running_vm": bool(attached and vm["state"] == "running"),
         }
@@ -549,7 +559,31 @@ def list_usb_devices(name: str) -> list[dict]:
         else:
             device["device_type"] = "USB device"
             device["connection_hint"] = ""
+    attached_apple_ports = {
+        saved.get("host_port")
+        for saved in state.values()
+        if saved.get("vendor") == "05ac" and saved.get("host_port") and saved.get("qemu_id")
+    }
+    for device in devices_by_id.values():
+        if (device.get("vendor") == "05ac" and not device.get("attached")
+                and device.get("host_port") in attached_apple_ports):
+            device["already_represented"] = True
+            device["available_on_host"] = False
+            device["connection_hint"] = (
+                "This Apple device reappeared on the same physical USB port. It is already "
+                "connected; do not connect this second entry."
+            )
     return list(devices_by_id.values())
+
+
+def usb_capacity(name: str) -> dict:
+    """Count manager-owned physical devices; QEMU's virtual inputs are not recorded here."""
+    attached = read_usb_state().get(valid_name(name), {})
+    used = sum(
+        1 for device in attached.values()
+        if device.get("qemu_id") and not device.get("virtual_input")
+    )
+    return {"used": used, "limit": USB_PASSTHROUGH_LIMIT, "virtual_inputs_counted": False}
 
 
 class QMP:
@@ -720,6 +754,18 @@ def usb_sysfs_node(device: dict) -> Path | None:
     return None
 
 
+def usb_host_port(device: dict) -> str | None:
+    """Return the physical USB port path, which can survive a USB address change."""
+    node = usb_sysfs_node(device)
+    if node is None:
+        return None
+    try:
+        port = (node / "devpath").read_text(encoding="ascii").strip()
+    except OSError:
+        return None
+    return port or None
+
+
 def usb_storage_mounts(device: dict) -> list[tuple[str, str]]:
     """Find mounted volumes belonging to this USB disk without changing host state."""
     usb_root = usb_sysfs_node(device)
@@ -881,8 +927,16 @@ def _usb_action_locked(name: str, action: str, device_id: str) -> str:
             device = devices.get(device_id)
             if device is None:
                 raise ManagerError("That USB device is no longer connected to the host.")
+            if device.get("already_represented"):
+                raise ManagerError(device.get("connection_hint") or "This USB device is already connected to the VM.")
             if device_id in attached:
                 raise ManagerError("That device is already attached to this VM.")
+            capacity = usb_capacity(name)
+            if capacity["used"] >= capacity["limit"]:
+                raise ManagerError(
+                    f"All {capacity['limit']} physical USB passthrough slots are in use. "
+                    "Return a device to Linux first. The VM's virtual keyboard and mouse do not count."
+                )
             hotplug_bus = usb_hotplug_bus(qmp_hmp(qmp, "info qtree"))
             usb_node = usb_node_path(device)
             if not usb_node.exists() or not usb_node_matches(device):
@@ -915,9 +969,18 @@ def _usb_action_locked(name: str, action: str, device_id: str) -> str:
                 "driver": "usb-host",
                 "id": qemu_id,
                 "bus": hotplug_bus,
-                "hostbus": device["bus"],
-                "hostaddr": device["address"],
             }
+            if device["vendor"] == "05ac" and device.get("host_port"):
+                # iOS can re-enumerate at a new bus address on the same physical
+                # port. Match that port and identity instead of a stale address.
+                qemu_device.update({
+                    "hostbus": device["bus"],
+                    "hostport": device["host_port"],
+                    "vendorid": int(device["vendor"], 16),
+                })
+            else:
+                qemu_device["hostbus"] = device["bus"]
+                qemu_device["hostaddr"] = device["address"]
             # iOS devices can be reset into their deactivated USB configuration
             # by the guest. Keep the default reset behavior for other USB devices.
             if device["vendor"] == "05ac":
@@ -947,7 +1010,7 @@ def _usb_action_locked(name: str, action: str, device_id: str) -> str:
                     state_for_vm = read_usb_state().get(name, {})
                     restore_usbmuxd_if_needed(name, state_for_vm)
                 raise ManagerError(detail) from exc
-            attached[device_id] = {**device, "qemu_id": qemu_id}
+            attached[device_id] = {**device, "qemu_id": qemu_id, "virtual_input": False}
             write_usb_state(state)
             released = [*storage_mounts, *host_mounts]
             suffix = f" Linux released {', '.join(released)}." if released else ""
@@ -1164,7 +1227,8 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/shared-folder":
                 self._send(200, shared_folder_status(query.get("name", [""])[0]))
             elif parsed.path == "/api/usb":
-                self._send(200, {"devices": list_usb_devices(query.get("name", [""])[0])})
+                name = query.get("name", [""])[0]
+                self._send(200, {"devices": list_usb_devices(name), "capacity": usb_capacity(name)})
             elif parsed.path == "/api/usb/diagnostics":
                 self._send(200, usb_diagnostics(query.get("name", [""])[0]))
             elif parsed.path == "/api/logs":
