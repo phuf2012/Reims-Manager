@@ -9,6 +9,7 @@ import threading
 import time
 
 import gi
+gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gdk, Gio, GLib, Gtk
 
@@ -16,22 +17,47 @@ import app as backend
 
 
 APP_CSS = b"""
-window, dialog { background: #101319; color: #edf2f7; }
-headerbar { background: #171d27; color: #f3f6fb; border-color: #303947; }
-notebook { background: #101319; }
-notebook > header { background: #151a22; border-color: #303947; }
+* { color: #edf2f7; }
+window, window.background, dialog, dialog.background {
+  background-color: #101319;
+  color: #edf2f7;
+}
+headerbar, headerbar.titlebar {
+  background-color: #171d27;
+  color: #f3f6fb;
+  border-color: #303947;
+}
+notebook, notebook > stack, notebook > stack > *, box, grid {
+  background-color: #101319;
+  color: #edf2f7;
+}
+notebook > header { background-color: #151a22; border-color: #303947; }
 notebook > header > tabs > tab { color: #a5b0c0; padding: 9px 13px; }
 notebook > header > tabs > tab:checked { color: #edf2f7; border-color: #73a9ff; }
-button { background: #202733; color: #edf2f7; border: 1px solid #354153; border-radius: 7px; padding: 6px 11px; }
-button:hover { background: #293545; border-color: #6286ba; }
-button:checked, button:active { background: #293545; }
-button.suggested-action { background: #73a9ff; color: #071628; border-color: #8bb8ff; font-weight: bold; }
-button.destructive-action { background: #37262d; color: #ffd1d1; border-color: #663d45; }
-entry, spinbutton, combobox button { background: #121720; color: #edf2f7; border-color: #354153; }
-treeview, textview, list, row { background: #151a22; color: #edf2f7; }
-treeview:selected, row:selected { background: #293b55; color: #ffffff; }
-frame, expander { color: #edf2f7; }
-tooltip { background: #202733; color: #edf2f7; }
+label { color: #edf2f7; }
+button {
+  background-color: #202733;
+  color: #edf2f7;
+  border: 1px solid #354153;
+  border-radius: 7px;
+  padding: 6px 11px;
+}
+button:hover { background-color: #293545; border-color: #6286ba; }
+button:checked, button:active { background-color: #293545; }
+button.suggested-action { background-color: #73a9ff; color: #071628; border-color: #8bb8ff; font-weight: bold; }
+button.destructive-action { background-color: #37262d; color: #ffd1d1; border-color: #663d45; }
+entry, spinbutton, combobox, combobox button {
+  background-color: #121720;
+  color: #edf2f7;
+  border-color: #354153;
+}
+treeview.view, textview, list, row, frame, scrolledwindow {
+  background-color: #151a22;
+  color: #edf2f7;
+}
+treeview.view:selected, row:selected { background-color: #293b55; color: #ffffff; }
+expander { color: #edf2f7; }
+tooltip { background-color: #202733; color: #edf2f7; }
 """
 
 
