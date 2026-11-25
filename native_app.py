@@ -91,7 +91,7 @@ class ReimsManager(Gtk.Application):
         page.pack_start(heading, False, False, 0)
 
         explanation = Gtk.Label(
-            label="Check GitHub for a newer Reims Manager release. Enabling automatic checks checks now and on app launch, at most once per day. Updates are never downloaded or installed without your action.",
+            label="Check GitHub over HTTPS for a newer Reims Manager release. Enabling automatic checks checks now and on app launch, at most once per day. Updates are never installed without your action. Linux Mint Update Manager needs a signed APT repository; this release does not configure one.",
             xalign=0,
         )
         explanation.set_line_wrap(True)
@@ -118,7 +118,7 @@ class ReimsManager(Gtk.Application):
 
         self.update_link = Gtk.LinkButton.new_with_label(
             "https://github.com/phuf2012/Reims-Manager/releases",
-            "Open GitHub releases",
+            "Open secure GitHub release download",
         )
         self.update_link.set_halign(Gtk.Align.START)
         self.update_link.set_no_show_all(True)
@@ -237,8 +237,12 @@ class ReimsManager(Gtk.Application):
         self.gpu_combo = Gtk.ComboBoxText()
         self.gpu_combo.append("auto", "Auto select")
         self.add_setting_row(grid, 2, "Graphics device", self.gpu_combo)
+        self.graphics_combo = Gtk.ComboBoxText()
+        self.graphics_combo.append("reims-vgpu", "Reims vGPU (accelerated)")
+        self.graphics_combo.append("vmware-svga", "VMware SVGA (compatibility, no acceleration)")
+        self.add_setting_row(grid, 3, "Graphics backend", self.graphics_combo)
         self.video_acceleration_switch = Gtk.Switch()
-        self.add_setting_row(grid, 3, "Video acceleration", self.video_acceleration_switch)
+        self.add_setting_row(grid, 4, "Video acceleration", self.video_acceleration_switch)
 
         self.resolution_combo = Gtk.ComboBoxText()
         for value, label in (
@@ -249,24 +253,24 @@ class ReimsManager(Gtk.Application):
             ("1280x720", "1280 × 720"),
         ):
             self.resolution_combo.append(value, label)
-        self.add_setting_row(grid, 4, "Resolution", self.resolution_combo)
+        self.add_setting_row(grid, 5, "Resolution", self.resolution_combo)
 
         self.refresh_combo = Gtk.ComboBoxText()
         self.refresh_combo.append("host", "Host refresh rate")
         self.refresh_combo.append("60", "60 Hz")
         self.refresh_combo.append("120", "120 Hz")
-        self.add_setting_row(grid, 5, "Refresh rate", self.refresh_combo)
+        self.add_setting_row(grid, 6, "Refresh rate", self.refresh_combo)
 
         self.hidpi_switch = Gtk.Switch()
-        self.add_setting_row(grid, 6, "HiDPI display", self.hidpi_switch)
+        self.add_setting_row(grid, 7, "HiDPI display", self.hidpi_switch)
         self.borderless_switch = Gtk.Switch()
-        self.add_setting_row(grid, 7, "Borderless window", self.borderless_switch)
+        self.add_setting_row(grid, 8, "Borderless window", self.borderless_switch)
         self.audio_switch = Gtk.Switch()
-        self.add_setting_row(grid, 8, "Audio", self.audio_switch)
+        self.add_setting_row(grid, 9, "Audio", self.audio_switch)
         self.network_switch = Gtk.Switch()
-        self.add_setting_row(grid, 9, "Network", self.network_switch)
+        self.add_setting_row(grid, 10, "Network", self.network_switch)
         self.logs_switch = Gtk.Switch()
-        self.add_setting_row(grid, 10, "Diagnostic logs", self.logs_switch)
+        self.add_setting_row(grid, 11, "Diagnostic logs", self.logs_switch)
 
         self.save_settings_button = Gtk.Button(label="Save settings")
         self.save_settings_button.set_halign(Gtk.Align.START)
@@ -414,6 +418,12 @@ class ReimsManager(Gtk.Application):
         self.usb_action_button.set_sensitive(False)
         self.usb_action_button.connect("clicked", self.on_usb_action)
         toolbar.pack_start(self.usb_action_button, False, False, 0)
+        self.usb_device_hint = Gtk.Label(
+            label="For iPhone or iPad: unlock it before connecting. If macOS asks, tap Trust and enter the passcode.",
+            xalign=0,
+        )
+        self.usb_device_hint.set_line_wrap(True)
+        page.pack_start(self.usb_device_hint, False, False, 0)
         troubleshooting = Gtk.Expander(label="USB troubleshooting")
         advanced = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         diag = Gtk.Button(label="Check guest USB bus")
@@ -559,6 +569,10 @@ class ReimsManager(Gtk.Application):
         self.video_acceleration_switch.set_active(
             details.get("video", "on").lower().startswith("on")
         )
+        graphics = details.get("graphics", "reims-vgpu").lower()
+        self.graphics_combo.set_active_id(
+            "vmware-svga" if "vmware-svga" in graphics else "reims-vgpu"
+        )
         self.audio_switch.set_active(details.get("audio", "off").lower() == "on")
         self.network_switch.set_active(details.get("network", "off").lower() not in ("off", "disabled", "none"))
         self.logs_switch.set_active(details.get("logs", "off").lower() == "on")
@@ -600,6 +614,7 @@ class ReimsManager(Gtk.Application):
             "cpus": self.cpu_spin.get_value_as_int(),
             "memory": self.memory_combo.get_active_id() or "16",
             "gpu": self.gpu_combo.get_active_id() or "auto",
+            "graphics": self.graphics_combo.get_active_id() or "reims-vgpu",
             "resolution": self.resolution_combo.get_active_id() or "host",
             "refresh": self.refresh_combo.get_active_id() or "host",
             "video_acceleration": self.video_acceleration_switch.get_active(),
@@ -668,9 +683,10 @@ class ReimsManager(Gtk.Application):
                     else "Available in Linux"
                 )
                 self.usb_store.append([
-                    device["description"],
+                    f"{device.get('device_type', 'USB device')}: {device['description']}"
+                    if device.get("vendor") == "05ac" else device["description"],
                     "",
-                    "",
+                    device.get("connection_hint", ""),
                     state,
                     device["id"],
                     bool(device.get("attached")),
@@ -686,6 +702,8 @@ class ReimsManager(Gtk.Application):
         running = any(row["name"] == self.selected_vm() and row["state"] == "running" for row in self.vm_rows)
         available = bool(itr) and (model[itr][5] or running)
         self.usb_action_button.set_sensitive(available and not self.usb_action_in_progress)
+        self.usb_device_hint.set_text(model[itr][2] if itr and model[itr][2] else
+            "For iPhone or iPad: unlock it before connecting. If macOS asks, tap Trust and enter the passcode.")
         if itr:
             self.usb_action_button.set_label("Return to Linux" if model[itr][5] else "Connect to VM")
 
