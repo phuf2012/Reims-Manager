@@ -1,3 +1,16 @@
+reims-manager (1.0.2-5) unstable; urgency=medium
+
+  * Add a Reims Manager GTK theme so the native interface has a consistent
+    appearance across desktop themes.
+  * Limit physical USB passthrough to four devices and exclude virtual inputs.
+  * Match Apple USB devices by physical port when possible and suppress the
+    duplicate row produced when an iPhone re-enumerates on that port.
+  * Show slot use in both interfaces and check capacity before host release.
+  * Select update assets by package format and document the groundwork and
+    limitations for distro update managers and Apple Watch support.
+
+ -- phuf2012 <245987108+phuf2012@users.noreply.github.com>  Tue, 24 Nov 2026 10:00:00 -0600
+
 reims-manager (1.0.2-4) unstable; urgency=medium
 
   * Keep prerelease builds out of the update channel for stable installs.
