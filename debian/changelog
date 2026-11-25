@@ -2,6 +2,8 @@ reims-manager (1.0.2-5) unstable; urgency=medium
 
   * Add a Reims Manager GTK theme so the native interface has a consistent
     appearance across desktop themes.
+  * Fix light-theme contrast by explicitly setting the window, panel, and label
+    colors instead of relying on inherited desktop theme colors.
   * Limit physical USB passthrough to four devices and exclude virtual inputs.
   * Match Apple USB devices by physical port when possible and suppress the
     duplicate row produced when an iPhone re-enumerates on that port.
