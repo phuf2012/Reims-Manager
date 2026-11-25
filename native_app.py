@@ -10,9 +10,29 @@ import time
 
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gio, GLib, Gtk
+from gi.repository import Gdk, Gio, GLib, Gtk
 
 import app as backend
+
+
+APP_CSS = b"""
+window, dialog { background: #101319; color: #edf2f7; }
+headerbar { background: #171d27; color: #f3f6fb; border-color: #303947; }
+notebook { background: #101319; }
+notebook > header { background: #151a22; border-color: #303947; }
+notebook > header > tabs > tab { color: #a5b0c0; padding: 9px 13px; }
+notebook > header > tabs > tab:checked { color: #edf2f7; border-color: #73a9ff; }
+button { background: #202733; color: #edf2f7; border: 1px solid #354153; border-radius: 7px; padding: 6px 11px; }
+button:hover { background: #293545; border-color: #6286ba; }
+button:checked, button:active { background: #293545; }
+button.suggested-action { background: #73a9ff; color: #071628; border-color: #8bb8ff; font-weight: bold; }
+button.destructive-action { background: #37262d; color: #ffd1d1; border-color: #663d45; }
+entry, spinbutton, combobox button { background: #121720; color: #edf2f7; border-color: #354153; }
+treeview, textview, list, row { background: #151a22; color: #edf2f7; }
+treeview:selected, row:selected { background: #293b55; color: #ffffff; }
+frame, expander { color: #edf2f7; }
+tooltip { background: #202733; color: #edf2f7; }
+"""
 
 
 class ReimsManager(Gtk.Application):
@@ -30,6 +50,15 @@ class ReimsManager(Gtk.Application):
         if getattr(self, "window", None):
             self.window.present()
             return
+
+        provider = Gtk.CssProvider()
+        provider.load_from_data(APP_CSS)
+        screen = Gdk.Screen.get_default()
+        if screen:
+            Gtk.StyleContext.add_provider_for_screen(
+                screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            )
+        self._theme_provider = provider
 
         self.window = Gtk.ApplicationWindow(application=self, title="Reims Manager")
         self.window.set_default_size(860, 620)
@@ -56,9 +85,11 @@ class ReimsManager(Gtk.Application):
         self.refresh_button.connect("clicked", lambda *_: self.refresh_vms())
         top.pack_start(self.refresh_button, False, False, 0)
         self.start_button = Gtk.Button(label="Start")
+        self.start_button.get_style_context().add_class("suggested-action")
         self.start_button.connect("clicked", lambda *_: self.run_action("start"))
         top.pack_start(self.start_button, False, False, 0)
         self.stop_button = Gtk.Button(label="Stop")
+        self.stop_button.get_style_context().add_class("destructive-action")
         self.stop_button.connect("clicked", lambda *_: self.run_action("stop"))
         top.pack_start(self.stop_button, False, False, 0)
         self.start_button.set_sensitive(False)
@@ -91,7 +122,7 @@ class ReimsManager(Gtk.Application):
         page.pack_start(heading, False, False, 0)
 
         explanation = Gtk.Label(
-            label="Check GitHub over HTTPS for a newer Reims Manager release. Enabling automatic checks checks now and on app launch, at most once per day. Updates are never installed without your action. Linux Mint Update Manager needs a signed APT repository; this release does not configure one.",
+            label="Check GitHub over HTTPS for a newer Reims Manager release. Enabling automatic checks checks now and on app launch, at most once per day. Updates are never installed without your action. Showing releases in Linux distribution update managers requires signed package repositories; this release does not configure them.",
             xalign=0,
         )
         explanation.set_line_wrap(True)
@@ -397,7 +428,7 @@ class ReimsManager(Gtk.Application):
         hint.set_line_wrap(True)
         page.pack_start(hint, False, False, 0)
 
-        self.usb_store = Gtk.ListStore(str, str, str, str, str, bool)
+        self.usb_store = Gtk.ListStore(str, str, str, str, str, bool, bool)
         self.usb_view = Gtk.TreeView(model=self.usb_store)
         for title, col in (("Device", 0), ("Status", 3)):
             renderer = Gtk.CellRendererText()
@@ -410,6 +441,10 @@ class ReimsManager(Gtk.Application):
 
         toolbar = Gtk.Box(spacing=8)
         page.pack_start(toolbar, False, False, 0)
+        self.usb_capacity_label = Gtk.Label(
+            label="Physical device slots: 0 / 4 · virtual keyboard and mouse excluded", xalign=0
+        )
+        page.pack_start(self.usb_capacity_label, False, False, 0)
         scan = Gtk.Button(label="Scan now")
         scan.connect("clicked", lambda *_: self.refresh_usb())
         toolbar.pack_start(scan, False, False, 0)
@@ -669,8 +704,13 @@ class ReimsManager(Gtk.Application):
             self.usb_scan_button.set_sensitive(True)
             self.usb_store.clear()
             if error:
-                self.usb_store.append([error, "", "", "", "", False])
+                self.usb_store.append([error, "", "", "", "", False, False])
                 return
+            rows, capacity = rows
+            self.usb_capacity_label.set_text(
+                f"Physical device slots: {capacity['used']} / {capacity['limit']} · "
+                "virtual keyboard and mouse excluded"
+            )
             for device in rows:
                 description = device["description"].lower()
                 if device["vendor"] == "1d6b" or "keyboard" in description or "mouse" in description:
@@ -679,6 +719,7 @@ class ReimsManager(Gtk.Application):
                     "Connected to VM" if device.get("attached_to_running_vm") and device.get("available_on_host", True)
                     else "In use by VM" if device.get("attached_to_running_vm")
                     else "Returned to Linux" if device.get("attached")
+                    else "Already connected" if device.get("already_represented")
                     else "In use by another app" if not device.get("available_on_host", True)
                     else "Available in Linux"
                 )
@@ -690,9 +731,10 @@ class ReimsManager(Gtk.Application):
                     state,
                     device["id"],
                     bool(device.get("attached")),
+                    bool(device.get("already_represented")),
                 ])
 
-        self.background(lambda: backend.list_usb_devices(name), done)
+        self.background(lambda: (backend.list_usb_devices(name), backend.usb_capacity(name)), done)
 
     def on_usb_selection(self, selection):
         model, itr = selection.get_selected()
@@ -700,7 +742,7 @@ class ReimsManager(Gtk.Application):
             self.usb_action_button.set_sensitive(False)
             return
         running = any(row["name"] == self.selected_vm() and row["state"] == "running" for row in self.vm_rows)
-        available = bool(itr) and (model[itr][5] or running)
+        available = bool(itr) and not model[itr][6] and (model[itr][5] or running)
         self.usb_action_button.set_sensitive(available and not self.usb_action_in_progress)
         self.usb_device_hint.set_text(model[itr][2] if itr and model[itr][2] else
             "For iPhone or iPad: unlock it before connecting. If macOS asks, tap Trust and enter the passcode.")
