@@ -199,12 +199,12 @@
         <section class="tab-content" id="tab-updates">
           <div class="card">
             <h2>Reims Manager updates</h2>
-            <p class="usb-note">Check GitHub over HTTPS for a newer Reims Manager release. Update downloads come from the official GitHub release page and are never installed without your action. Linux Mint Update Manager needs a signed APT repository; this release does not configure one.</p>
+            <p class="usb-note">Check GitHub over HTTPS for a newer Reims Manager release. Update downloads come from the official GitHub release page and are never installed without your action. Showing releases in Linux distribution update managers requires signed package repositories; this release does not configure them.</p>
             <label class="check"><input id="auto-update-check" type="checkbox"> Automatically check for updates</label>
             <div class="toolbar" style="margin-top:14px">
               <button id="check-updates" class="primary" type="button">Check for Updates</button>
             </div>
-            <p id="update-status" class="hint" aria-live="polite">Installed version: 1.0.2-4</p>
+            <p id="update-status" class="hint" aria-live="polite">Installed version: 1.0.2-5</p>
             <p><a id="update-link" hidden target="_blank" rel="noopener noreferrer">Download update</a></p>
           </div>
         </section>
@@ -351,6 +351,7 @@
       try {
         const data = await request('usb?name=' + encodeURIComponent(vmName));
         if (selected !== vmName) return;
+        status.textContent = `Physical device slots: ${data.capacity.used} / ${data.capacity.limit} · virtual keyboard and mouse excluded.`;
         body.replaceChildren();
         if (!data.devices.length) {
           body.innerHTML = '<tr><td colspan="3">No USB devices found. Plug one in and scan again.</td></tr>';
@@ -370,12 +371,12 @@
           const state = document.createElement('td');
           state.textContent=device.attached
             ? (device.attached_to_running_vm ? (device.available_on_host ? 'Connected to VM' : 'In use by VM') : 'Returned to Linux (VM stopped)')
-            : (device.available_on_host ? 'Available in Linux' : 'In use by another app');
+            : (device.already_represented ? 'Already connected' : device.available_on_host ? 'Available in Linux' : 'In use by another app');
           const cell = document.createElement('td');
           const button = document.createElement('button');
           button.className = device.attached ? '' : 'primary';
           button.textContent = device.attached ? 'Return to Linux' : 'Connect to Mac';
-          button.disabled = usbBusy || actionBusy || (!device.attached && (!device.available_on_host || latest.find(v=>v.name===vmName)?.state!=='running'));
+          button.disabled = usbBusy || actionBusy || (!device.attached && (device.already_represented || !device.available_on_host || data.capacity.used >= data.capacity.limit || latest.find(v=>v.name===vmName)?.state!=='running'));
           button.onclick = async () => {
             if (usbBusy) return;
             usbBusy = true;
@@ -396,7 +397,7 @@
           };
           cell.append(button); row.append(name, state, cell); body.append(row);
         }
-        status.textContent = `Scan complete · ${data.devices.length} device${data.devices.length === 1 ? '' : 's'} found.`;
+        status.textContent += ` Scan complete · ${data.devices.length} device${data.devices.length === 1 ? '' : 's'} found.`;
       } catch (error) {
         if (selected === vmName) {
           body.replaceChildren(); const row = document.createElement('tr'); const cell = document.createElement('td');
