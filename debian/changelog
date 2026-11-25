@@ -1,3 +1,16 @@
+reims-manager (1.0.2-4) unstable; urgency=medium
+
+  * Keep prerelease builds out of the update channel for stable installs.
+  * Add a Reims vGPU accelerated graphics backend choice and a VMware SVGA
+    compatibility fallback to both settings interfaces.
+  * Add device-specific unlock and Trust guidance for iPhone and iPad passthrough.
+  * Clarify that GitHub update links use HTTPS and that Mint Update Manager
+    needs a signed APT repository, which this release does not configure.
+  * Document Apple Watch passthrough as a future research item, not a working
+    feature, because watch pairing is managed through a paired iPhone.
+
+ -- phuf2012 <245987108+phuf2012@users.noreply.github.com>  Tue, 24 Nov 2026 10:00:00 -0600
+
 reims-manager (1.0.2-3) unstable; urgency=medium
 
   * Detect the VM's actual USB controller and use its bus for hotplug.
