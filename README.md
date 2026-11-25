@@ -1,6 +1,6 @@
 # Reims Manager
 
-Reims Manager is a native GTK desktop app for managing virtual machines created by [Reims vGPU](https://github.com/steelbrain/reims-vgpu). It currently targets Linux desktop systems such as Linux Mint and Ubuntu.
+Reims Manager is a native GTK desktop app for managing virtual machines created by [Reims vGPU](https://github.com/steelbrain/reims-vgpu). It currently targets Linux desktop systems such as Ubuntu and other Linux distros (Ones that support .deb).
 
 ## Reims Manager 1.0.2-4 — Pre-Release
 
